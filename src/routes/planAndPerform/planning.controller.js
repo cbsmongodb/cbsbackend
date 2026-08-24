@@ -1,0 +1,264 @@
+import PlanConfiguration from "../../models/PlanConfiguration.js";
+import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
+import Address from "../../models/Address.js";
+import Attendance from "../../models/Attendance.js";
+import Hospital from "../../models/Hospital.js";
+
+const POPULATE = "employee hospital pharmacy author performer";
+
+// GET /api/plannings?performer=&period_from=&period_to=&status=
+export async function getAllPlannings(req, res) {
+  try {
+    const filter = {};
+    if (req.query.performer) filter.performer = req.query.performer;
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.period_from || req.query.period_to) {
+      filter.period = {};
+      if (req.query.period_from) filter.period.$gte = new Date(req.query.period_from);
+      if (req.query.period_to) filter.period.$lte = new Date(req.query.period_to);
+    }
+
+    const plans = await PlanConfiguration.find(filter).populate(POPULATE).sort({ period: -1 });
+    res.json(plans);
+  } catch (err) {
+    console.error("getAllPlannings failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function getPlanning(req, res) {
+  try {
+    const plan = await PlanConfiguration.findById(req.params.id)
+      .populate(POPULATE)
+      .populate({ path: "doctors", populate: "doctor" });
+    if (!plan) return res.status(404).json({ error: "Plan not found" });
+
+    const doctors = await PlanConfigurationDoctor.find({ planConfiguration: plan._id }).populate(
+      "doctor"
+    );
+
+    res.json({ ...plan.toObject(), planConfigurationDoctors: doctors });
+  } catch (err) {
+    console.error("getPlanning failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// POST /api/plannings — performer/author default to the logged-in employee
+export async function createPlanning(req, res) {
+  try {
+    const plan = await PlanConfiguration.create({
+      ...req.body,
+      author: req.body.author || req.employee._id,
+      performer: req.body.performer || req.employee._id,
+      status: req.body.status || "planned",
+    });
+    const populated = await plan.populate(POPULATE);
+    res.status(201).json(populated);
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({ error: messages.join(", ") });
+    }
+    console.error("createPlanning failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// PUT /api/plannings/:id — Rails blocks edits once the plan's period isn't
+// today anymore; kept here for parity
+export async function updatePlanning(req, res) {
+  try {
+    const plan = await PlanConfiguration.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: "Plan not found" });
+
+    const today = new Date();
+    const planDay = new Date(plan.period);
+    const isToday = planDay.toDateString() === today.toDateString();
+    if (!isToday) {
+      return res.status(400).json({ error: "Only plans scheduled for today can be edited" });
+    }
+
+    Object.assign(plan, req.body);
+    await plan.save();
+    const populated = await plan.populate(POPULATE);
+    res.json(populated);
+  } catch (err) {
+    console.error("updatePlanning failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function deletePlanning(req, res) {
+  try {
+    const plan = await PlanConfiguration.findByIdAndDelete(req.params.id);
+    if (!plan) return res.status(404).json({ error: "Plan not found" });
+    await PlanConfigurationDoctor.deleteMany({ planConfiguration: plan._id });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("deletePlanning failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// POST /api/plannings/:id/doctors  { doctorId, note }
+export async function addDoctor(req, res) {
+  try {
+    const { doctorId, note } = req.body;
+    const existing = await PlanConfigurationDoctor.findOne({
+      planConfiguration: req.params.id,
+      doctor: doctorId,
+    });
+    if (existing) return res.json(existing);
+
+    const pcd = await PlanConfigurationDoctor.create({
+      planConfiguration: req.params.id,
+      doctor: doctorId,
+      note,
+      status: "planned",
+    });
+    res.status(201).json(pcd);
+  } catch (err) {
+    console.error("addDoctor failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// DELETE /api/plannings/:id/doctors/:pcdId
+export async function removeDoctor(req, res) {
+  try {
+    const pcd = await PlanConfigurationDoctor.findOneAndDelete({
+      _id: req.params.pcdId,
+      planConfiguration: req.params.id,
+    });
+    if (!pcd) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("removeDoctor failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// POST /api/plannings/:id/checkin   — sets status "i_went", drops a
+// performer_i_went_location Address, and creates a matching Attendance
+// row (mirrors Rails create_addressable with status "i_went")
+export function checkIn(io) {
+  return async (req, res) => {
+    try {
+      const plan = await PlanConfiguration.findById(req.params.id).populate("hospital pharmacy");
+      if (!plan) return res.status(404).json({ error: "Plan not found" });
+
+      const today = new Date();
+      if (new Date(plan.period).toDateString() !== today.toDateString()) {
+        return res.status(400).json({ error: "Only today's plans can be checked in" });
+      }
+
+      plan.status = "i_went";
+      plan.iWentAt = new Date();
+      await plan.save();
+
+      const { lat, lng, address } = req.body;
+      await Address.create({
+        addressableType: "PlanConfiguration",
+        addressableId: plan._id,
+        addressType: "performer_i_went_location",
+        lat,
+        lng,
+        cleanAddress: address,
+      });
+
+      const attendance = await Attendance.create({
+        employee: plan.performer,
+        attendanceType: "checkin",
+        attendanceTime: new Date(),
+        viaPlan: plan._id,
+      });
+
+      const hospitalName = plan.hospital?.name || plan.pharmacy?.pharmacyName;
+      io.emit("attendance:new", {
+        id: plan.performer,
+        checkinTime: attendance.attendanceTime,
+        hospitalName,
+        address,
+        attendanceType: "checkin",
+      });
+
+      res.json({ plan, attendance });
+    } catch (err) {
+      console.error("checkIn failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  };
+}
+
+// POST /api/plannings/:id/checkout — same idea, status "i_left"
+export function checkOut(io) {
+  return async (req, res) => {
+    try {
+      const plan = await PlanConfiguration.findById(req.params.id).populate("hospital pharmacy");
+      if (!plan) return res.status(404).json({ error: "Plan not found" });
+
+      const today = new Date();
+      if (new Date(plan.period).toDateString() !== today.toDateString()) {
+        return res.status(400).json({ error: "Only today's plans can be checked out" });
+      }
+
+      plan.status = "i_left";
+      plan.iLeftAt = new Date();
+      await plan.save();
+
+      const { lat, lng, address } = req.body;
+      await Address.create({
+        addressableType: "PlanConfiguration",
+        addressableId: plan._id,
+        addressType: "performer_i_left_location",
+        lat,
+        lng,
+        cleanAddress: address,
+      });
+
+      const attendance = await Attendance.create({
+        employee: plan.performer,
+        attendanceType: "checkout",
+        attendanceTime: new Date(),
+        viaPlan: plan._id,
+      });
+
+      const hospitalName = plan.hospital?.name || plan.pharmacy?.pharmacyName;
+      io.emit("attendance:new", {
+        id: plan.performer,
+        checkinTime: attendance.attendanceTime,
+        hospitalName,
+        address,
+        attendanceType: "checkout",
+      });
+
+      res.json({ plan, attendance });
+    } catch (err) {
+      console.error("checkOut failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  };
+}
+
+// GET /api/plannings/:id/doctors-available — doctors tied to the plan's
+// hospital, for the "add doctor" dropdown
+export async function doctorsForPlanHospital(req, res) {
+  try {
+    const plan = await PlanConfiguration.findById(req.params.id);
+    if (!plan?.hospital) return res.json([]);
+
+    const hospital = await Hospital.findById(plan.hospital);
+    if (!hospital) return res.json([]);
+
+    // doctors embed their hospital links — find any doctor whose
+    // hospitals[] array contains this hospital id
+    const Doctor = (await import("../../models/Doctor.js")).default;
+    const doctors = await Doctor.find({ "hospitals.hospital": plan.hospital, isActive: true });
+
+    res.json(doctors);
+  } catch (err) {
+    console.error("doctorsForPlanHospital failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}

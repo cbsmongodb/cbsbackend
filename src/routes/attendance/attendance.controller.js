@@ -1,0 +1,256 @@
+import Attendance from "../../models/Attendance.js";
+import Address from "../../models/Address.js";
+import Employee from "../../models/Employee.js";
+import PlanConfiguration from "../../models/PlanConfiguration.js";
+
+// Rails has three distinct "where is this person" concepts. This
+// controller covers all three:
+//   1. current_location  — a periodic GPS ping (Employee.setLastLocation)
+//   2. attendance         — daily checkin/checkout (this.markAttendance)
+//   3. plan i_went/i_left — per-visit tracking, lives in planning.controller.js
+//      (not here — it updates PlanConfiguration + Address together)
+
+// ---------- 1. current_location ----------
+
+// POST /api/attendance/current-location  { lat, lng, address? }
+export async function setCurrentLocation(req, res) {
+  try {
+    const { lat, lng, address } = req.body;
+    if (lat === undefined || lng === undefined) {
+      return res.status(400).json({ error: "lat and lng are required" });
+    }
+
+    const existing = await Address.findOne({
+      addressableType: "Employee",
+      addressableId: req.employee._id,
+      addressType: "current_location",
+    });
+
+    const payload = {
+      addressableType: "Employee",
+      addressableId: req.employee._id,
+      addressType: "current_location",
+      lat,
+      lng,
+      cleanAddress: address || existing?.cleanAddress || "",
+    };
+
+    const location = existing
+      ? await Address.findByIdAndUpdate(existing._id, payload, { new: true })
+      : await Address.create(payload);
+
+    res.json(location);
+  } catch (err) {
+    console.error("setCurrentLocation failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/attendance/current-locations — everyone's last-known ping today,
+// for the "Last Location" map. Scoped to role_based_employees in Rails —
+// here scoped to all active employees (tighten once requireRole is wired
+// into every route).
+export async function getCurrentLocations(req, res) {
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const locations = await Address.find({
+      addressableType: "Employee",
+      addressType: "current_location",
+      updatedAt: { $gte: startOfDay },
+    });
+
+    const employeeIds = locations.map((l) => l.addressableId);
+    const employees = await Employee.find({ _id: { $in: employeeIds } })
+      .select("firstName lastName group")
+      .populate("group", "name");
+    const employeeMap = new Map(employees.map((e) => [String(e._id), e]));
+
+    const results = locations
+      .filter((l) => l.lat != null && l.lng != null)
+      .map((l) => {
+        const emp = employeeMap.get(String(l.addressableId));
+        return {
+          addressId: l._id,
+          lat: l.lat,
+          lng: l.lng,
+          address: l.cleanAddress,
+          checkinTime: l.updatedAt,
+          employeeId: l.addressableId,
+          name: emp?.name || "Unknown",
+          groupName: emp?.group?.name || "[Group Not Assigned]",
+        };
+      });
+
+    res.json(results);
+  } catch (err) {
+    console.error("getCurrentLocations failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// ---------- 2. daily attendance (checkin/checkout) ----------
+
+// POST /api/attendance/mark  { type: 'checkin'|'checkout' }
+// Grabs the employee's most recent current_location as the attendance's
+// location (mirrors Rails: daily_attendance pulls from last_location).
+export function markAttendance(io) {
+  return async (req, res) => {
+    try {
+      const { type } = req.body;
+      if (!["checkin", "checkout"].includes(type)) {
+        return res.status(400).json({ error: "type must be checkin or checkout" });
+      }
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      // don't double-create today's checkin/checkout — update if it exists
+      let attendance = await Attendance.findOne({
+        employee: req.employee._id,
+        attendanceType: type,
+        attendanceTime: { $gte: startOfDay },
+      });
+
+      if (!attendance) {
+        attendance = await Attendance.create({
+          employee: req.employee._id,
+          attendanceType: type,
+          attendanceTime: new Date(),
+        });
+      } else {
+        attendance.attendanceTime = new Date();
+        await attendance.save();
+      }
+
+      const lastLocation = await Address.findOne({
+        addressableType: "Employee",
+        addressableId: req.employee._id,
+        addressType: "current_location",
+      });
+
+      const attendanceAddress = await Address.findOneAndUpdate(
+        { addressableType: "Attendance", addressableId: attendance._id, addressType: "attendance" },
+        {
+          addressableType: "Attendance",
+          addressableId: attendance._id,
+          addressType: "attendance",
+          lat: lastLocation?.lat,
+          lng: lastLocation?.lng,
+          cleanAddress: lastLocation?.cleanAddress,
+        },
+        { upsert: true, new: true }
+      );
+
+      const feedPayload = {
+        id: req.employee._id,
+        employeeName: req.employee.name,
+        checkinTime: attendance.attendanceTime,
+        address: attendanceAddress.cleanAddress,
+        attendanceType: attendance.attendanceType,
+      };
+
+      io.emit("attendance:new", feedPayload);
+
+      res.status(201).json({ attendance, location: attendanceAddress });
+    } catch (err) {
+      console.error("markAttendance failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  };
+}
+
+// GET /api/attendance/live-feed — today's plan-based visit locations
+// (i_went / i_left), the closest equivalent to Rails' load_feeds
+export async function getLiveFeed(req, res) {
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const plans = await PlanConfiguration.find({
+      period: { $gte: startOfDay },
+      status: { $in: ["i_went", "i_left", "completed"] },
+    })
+      .populate("performer", "firstName lastName")
+      .populate("hospital", "name lat lng address");
+
+    const planIds = plans.map((p) => p._id);
+    const addresses = await Address.find({
+      addressableType: "PlanConfiguration",
+      addressableId: { $in: planIds },
+    }).sort({ createdAt: 1 });
+
+    const addressesByPlan = new Map();
+    addresses.forEach((a) => {
+      const key = String(a.addressableId);
+      if (!addressesByPlan.has(key)) addressesByPlan.set(key, []);
+      addressesByPlan.get(key).push(a);
+    });
+
+    const feed = plans.map((plan) => {
+      const planAddresses = addressesByPlan.get(String(plan._id)) || [];
+      return {
+        planId: plan._id,
+        employeeId: plan.performer?._id,
+        employeeName: plan.performer?.name,
+        hospitalName: plan.hospital?.name,
+        status: plan.status,
+        addresses: planAddresses.map((a) => ({
+          addressType: a.addressType,
+          lat: a.lat,
+          lng: a.lng,
+          cleanAddress: a.cleanAddress,
+          time: a.createdAt,
+        })),
+      };
+    });
+
+    res.json(feed);
+  } catch (err) {
+    console.error("getLiveFeed failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/attendance/daily-status — who checked in, who checked out,
+// who's absent so far today
+export async function getDailyStatus(req, res) {
+  try {
+    const day = req.query.date ? new Date(req.query.date) : new Date();
+    const startOfDay = new Date(day);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(day);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const employees = await Employee.find({ isActive: true }).select("firstName lastName");
+
+    const records = await Attendance.find({
+      attendanceTime: { $gte: startOfDay, $lte: endOfDay },
+    });
+
+    const byEmployee = {};
+    for (const r of records) {
+      const key = String(r.employee);
+      if (!byEmployee[key]) byEmployee[key] = [];
+      byEmployee[key].push(r);
+    }
+
+    const status = employees.map((emp) => {
+      const events = byEmployee[String(emp._id)] || [];
+      return {
+        employee: emp,
+        checkedIn: events.some((e) => e.attendanceType === "checkin"),
+        checkedOut: events.some((e) => e.attendanceType === "checkout"),
+        events,
+      };
+    });
+
+    const absentees = status.filter((s) => !s.checkedIn).map((s) => s.employee);
+
+    res.json({ status, absentees });
+  } catch (err) {
+    console.error("getDailyStatus failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
