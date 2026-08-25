@@ -3,6 +3,7 @@ import Address from "../../models/Address.js";
 import Employee from "../../models/Employee.js";
 import PlanConfiguration from "../../models/PlanConfiguration.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
+import { distanceInMeters } from "../../utils/geo.js";
 
 // ---------- 1. current_location ----------
 
@@ -185,12 +186,16 @@ export async function getLiveFeed(req, res) {
         employeeName: plan.performer?.name,
         hospitalName: plan.hospital?.name,
         status: plan.status,
-        addresses: planAddresses.map((a) => ({
+             addresses: planAddresses.map((a) => ({
           addressType: a.addressType,
           lat: a.lat,
           lng: a.lng,
           cleanAddress: a.cleanAddress,
           time: a.createdAt,
+          distanceFromHospital:
+            plan.hospital?.lat != null && plan.hospital?.lng != null
+              ? distanceInMeters(a.lat, a.lng, plan.hospital.lat, plan.hospital.lng)
+              : null,
         })),
       };
     });
