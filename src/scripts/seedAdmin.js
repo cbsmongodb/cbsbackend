@@ -64,8 +64,6 @@ async function seed() {
     adminRole = await Role.create({ name: "admin", privileges: buildFullPrivileges() });
     console.log("Created 'admin' role.");
   } else {
-    // if the role already existed with the old broken "write" structure,
-    // fix it in place instead of requiring a manual delete
     adminRole.privileges = buildFullPrivileges();
     await adminRole.save();
     console.log("Updated existing 'admin' role's privileges to the correct structure.");
@@ -73,7 +71,21 @@ async function seed() {
 
   const existing = await Employee.findOne({ email: email.toLowerCase() });
   if (existing) {
-    console.log(`Employee with email ${email} already exists — nothing to do.`);
+    let changed = false;
+    if (!existing.isActive) {
+      existing.isActive = true;
+      changed = true;
+    }
+    if (String(existing.role) !== String(adminRole._id)) {
+      existing.role = adminRole._id;
+      changed = true;
+    }
+    if (changed) {
+      await existing.save();
+      console.log(`Employee ${email} already existed — fixed isActive/role and re-saved.`);
+    } else {
+      console.log(`Employee with email ${email} already exists and looks correct — nothing to do.`);
+    }
     await mongoose.disconnect();
     return;
   }
