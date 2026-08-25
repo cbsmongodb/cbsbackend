@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const notificationSchema = new mongoose.Schema(
   {
     employee: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true },
-    notifiableType: { type: String, enum: ["Task", "BudgetRequest", "BudgetRequird"], required: true },
+        notifiableType: { type: String, enum: ["Task", "BudgetRequest", "BudgetRequird", "StockAlert"], required: true },
     notifiableId: { type: mongoose.Schema.Types.ObjectId, required: true },
     message: String,
     read: { type: Boolean, default: false },

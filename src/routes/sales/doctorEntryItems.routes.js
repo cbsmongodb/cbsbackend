@@ -5,6 +5,9 @@ import {
   submitEntries,
   updateEntryItem,
   deleteEntries,
+  getCoefficientOverrides,
+  setCoefficientOverride,
+  deleteCoefficientOverride,
 } from "./doctorEntryItems.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -16,5 +19,9 @@ router.get("/snapshot", getDoctorSnapshot);
 router.post("/submit", submitEntries);
 router.put("/:id", updateEntryItem);
 router.delete("/", deleteEntries);
+
+router.get("/coefficient-overrides", getCoefficientOverrides);
+router.post("/coefficient-overrides", setCoefficientOverride);
+router.delete("/coefficient-overrides/:id", deleteCoefficientOverride);
 
 export default router;

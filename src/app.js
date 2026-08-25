@@ -35,9 +35,14 @@ import {
   regionRoutes,
 } from "./routes/admin/admin.routes.js";
 import divisionsRoutes from "./routes/divisions/divisions.routes.js";
+import leaveRoutes from "./routes/leaves/leave.routes.js";
+import notificationsRoutes from "./routes/notifications/notifications.routes.js";
+import {
+  planConfigRoutes,
+  notificationConfigRoutes,
+  batchConfigRoutes,
+} from "./routes/config/config.routes.js";
 
-// io is passed in from server.js so attendance.routes.js can emit
-// live-feed events straight from the controller
 export function createApp(io) {
   const app = express();
 
@@ -46,20 +51,16 @@ export function createApp(io) {
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
 
-  // --- auth (public — no permission gate) ---
   app.use("/api/auth", authRoutes);
 
-  // --- administration ---
   app.use("/api/employees", requirePermission("employees"), employeesRoutes);
   app.use("/api/admin/roles", requirePermission("roles"), roleRoutes);
   app.use("/api/admin/designations", requirePermission("designations"), designationRoutes);
   app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
   app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
   app.use("/api/admin/regions", requirePermission("regions"), regionRoutes);
-  // no Rails equivalent for divisions — auth only, no permission key to check
   app.use("/api/divisions", divisionsRoutes);
 
-  // --- configure market ---
   app.use("/api/doctors", requirePermission("doctors"), doctorsRoutes);
   app.use("/api/doctor-categories", requirePermission("doctor_categories"), doctorCategoryRoutes);
   app.use(
@@ -71,7 +72,6 @@ export function createApp(io) {
   app.use("/api/pharmacies", requirePermission("pharmacies"), pharmaciesRoutes);
   app.use("/api/profiles", requirePermission("profiles"), profilesRoutes);
 
-  // --- configure product ---
   app.use("/api/drugs", requirePermission("drugs"), drugsRoutes);
   app.use("/api/product-types", requirePermission("product_types"), productTypeRoutes);
   app.use("/api/manufacturers", requirePermission("manufacturers"), manufacturerRoutes);
@@ -81,27 +81,17 @@ export function createApp(io) {
     producingCountryRoutes
   );
 
-  // --- data entry / sales ---
   app.use("/api/sales-entries", requirePermission("sales"), salesEntriesRoutes);
-  // Doctor Sales Entry is gated by role helper methods in Rails
-  // (system_admin?/office_manager_with_role?/etc), not a privilege key —
-  // auth only here; tighten with role-name checks later if needed.
   app.use("/api/doctor-entry-items", doctorEntryItemsRoutes);
   app.use("/api/budgets", requirePermission("budgets"), budgetRoutes);
-  // no dedicated Rails privilege key for the approval workflow sub-resources
-  // — auth only (each router already requires a valid login internally)
   app.use("/api/budget-requireds", budgetRequirdRoutes);
   app.use("/api/budget-requests", budgetRequestRoutes);
 
-  // --- attendance / live feed (needs io) ---
   app.use("/api/attendance", requirePermission("attendances"), attendanceRoutes(io));
 
-  // --- plan and perform (needs io — checkin/checkout broadcast to Live Feed) ---
   app.use("/api/plannings", requirePermission("plannings"), planningsRoutes(io));
-  // Task has no dedicated privilege key in Rails — auth only
   app.use("/api/tasks", tasksRoutes);
 
-  // --- reports ---
   app.use("/api/reports/efficiency", requirePermission("efficiency_report"), efficiencyRoutes);
   app.use(
     "/api/reports/reimbursement",
@@ -109,6 +99,14 @@ export function createApp(io) {
     reimbursementRoutes
   );
   app.use("/api/reports/attendances", requirePermission("attendances"), attendancesReportRoutes);
+
+  app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
+
+  app.use("/api/notifications", notificationsRoutes);
+
+  app.use("/api/config/plan", planConfigRoutes);
+  app.use("/api/config/notifications", notificationConfigRoutes);
+  app.use("/api/config/batch", batchConfigRoutes);
 
   return app;
 }

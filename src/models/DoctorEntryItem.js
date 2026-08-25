@@ -17,7 +17,8 @@ const doctorEntryItemSchema = new mongoose.Schema(
     prescription: { type: Number, default: 0 },
     sale: { type: Number, default: 0 },
     budget: { type: Number, default: 0 }, // per-box bonus rate for this item
-    difference: { type: Number, default: 0 },
+        difference: { type: Number, default: 0 },
+    coefficient: { type: Number, default: 0 },
 
     issuedBudget: { type: Number, default: 0 },
     plannedBudget: { type: Number, default: 0 },

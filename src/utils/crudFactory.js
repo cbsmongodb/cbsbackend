@@ -1,10 +1,4 @@
-// A small factory that generates standard list/create/read/update/delete
-// handlers for a Mongoose model. Most "simple lookup table" resources
-// (product types, manufacturers, hospitals, roles, etc.) just wire this
-// straight into their routes — no repeated boilerplate per resource.
-//
-// Anything with real business logic (attendance, sales, doctors with
-// filters) gets its own controller instead of this factory.
+import { sendAsExcel } from "./excel.js";
 
 export function getAll(Model, defaultPopulate = "") {
   return async (req, res) => {
@@ -80,7 +74,23 @@ export function deleteOne(Model) {
   };
 }
 
-// convenience: crud(Model).getAll / .getOne / .createOne / .updateOne / .deleteOne
+export function exportExcel(Model, columns, defaultPopulate = "") {
+  return async (req, res) => {
+    try {
+      const docs = await Model.find().populate(defaultPopulate).sort({ createdAt: -1 });
+      const rows = docs.map((doc) => doc.toObject());
+      await sendAsExcel(res, {
+        filename: `${Model.modelName}-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        columns,
+        rows,
+      });
+    } catch (err) {
+      console.error(`exportExcel ${Model.modelName} failed:`, err);
+      res.status(500).json({ error: "Server error" });
+    }
+  };
+}
+
 export function crud(Model, defaultPopulate = "") {
   return {
     getAll: getAll(Model, defaultPopulate),

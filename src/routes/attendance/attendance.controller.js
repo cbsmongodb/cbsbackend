@@ -2,17 +2,10 @@ import Attendance from "../../models/Attendance.js";
 import Address from "../../models/Address.js";
 import Employee from "../../models/Employee.js";
 import PlanConfiguration from "../../models/PlanConfiguration.js";
-
-// Rails has three distinct "where is this person" concepts. This
-// controller covers all three:
-//   1. current_location  — a periodic GPS ping (Employee.setLastLocation)
-//   2. attendance         — daily checkin/checkout (this.markAttendance)
-//   3. plan i_went/i_left — per-visit tracking, lives in planning.controller.js
-//      (not here — it updates PlanConfiguration + Address together)
+import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 
 // ---------- 1. current_location ----------
 
-// POST /api/attendance/current-location  { lat, lng, address? }
 export async function setCurrentLocation(req, res) {
   try {
     const { lat, lng, address } = req.body;
@@ -46,10 +39,6 @@ export async function setCurrentLocation(req, res) {
   }
 }
 
-// GET /api/attendance/current-locations — everyone's last-known ping today,
-// for the "Last Location" map. Scoped to role_based_employees in Rails —
-// here scoped to all active employees (tighten once requireRole is wired
-// into every route).
 export async function getCurrentLocations(req, res) {
   try {
     const startOfDay = new Date();
@@ -92,9 +81,6 @@ export async function getCurrentLocations(req, res) {
 
 // ---------- 2. daily attendance (checkin/checkout) ----------
 
-// POST /api/attendance/mark  { type: 'checkin'|'checkout' }
-// Grabs the employee's most recent current_location as the attendance's
-// location (mirrors Rails: daily_attendance pulls from last_location).
 export function markAttendance(io) {
   return async (req, res) => {
     try {
@@ -106,21 +92,25 @@ export function markAttendance(io) {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
-      // don't double-create today's checkin/checkout — update if it exists
       let attendance = await Attendance.findOne({
         employee: req.employee._id,
         attendanceType: type,
         attendanceTime: { $gte: startOfDay },
       });
 
+      const now = new Date();
+      const attendanceStatus = await computeAttendanceStatus(type, now);
+
       if (!attendance) {
         attendance = await Attendance.create({
           employee: req.employee._id,
           attendanceType: type,
-          attendanceTime: new Date(),
+          attendanceTime: now,
+          attendanceStatus,
         });
       } else {
-        attendance.attendanceTime = new Date();
+        attendance.attendanceTime = now;
+        attendance.attendanceStatus = attendanceStatus;
         await attendance.save();
       }
 
@@ -149,6 +139,7 @@ export function markAttendance(io) {
         checkinTime: attendance.attendanceTime,
         address: attendanceAddress.cleanAddress,
         attendanceType: attendance.attendanceType,
+        attendanceStatus: attendance.attendanceStatus,
       };
 
       io.emit("attendance:new", feedPayload);
@@ -161,8 +152,6 @@ export function markAttendance(io) {
   };
 }
 
-// GET /api/attendance/live-feed — today's plan-based visit locations
-// (i_went / i_left), the closest equivalent to Rails' load_feeds
 export async function getLiveFeed(req, res) {
   try {
     const startOfDay = new Date();
@@ -213,8 +202,6 @@ export async function getLiveFeed(req, res) {
   }
 }
 
-// GET /api/attendance/daily-status — who checked in, who checked out,
-// who's absent so far today
 export async function getDailyStatus(req, res) {
   try {
     const day = req.query.date ? new Date(req.query.date) : new Date();

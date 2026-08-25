@@ -3,10 +3,11 @@ import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import Address from "../../models/Address.js";
 import Attendance from "../../models/Attendance.js";
 import Hospital from "../../models/Hospital.js";
+import { distanceInMeters } from "../../utils/geo.js";
+import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 
 const POPULATE = "employee hospital pharmacy author performer";
 
-// GET /api/plannings?performer=&period_from=&period_to=&status=
 export async function getAllPlannings(req, res) {
   try {
     const filter = {};
@@ -44,7 +45,6 @@ export async function getPlanning(req, res) {
   }
 }
 
-// POST /api/plannings — performer/author default to the logged-in employee
 export async function createPlanning(req, res) {
   try {
     const plan = await PlanConfiguration.create({
@@ -65,8 +65,6 @@ export async function createPlanning(req, res) {
   }
 }
 
-// PUT /api/plannings/:id — Rails blocks edits once the plan's period isn't
-// today anymore; kept here for parity
 export async function updatePlanning(req, res) {
   try {
     const plan = await PlanConfiguration.findById(req.params.id);
@@ -101,7 +99,6 @@ export async function deletePlanning(req, res) {
   }
 }
 
-// POST /api/plannings/:id/doctors  { doctorId, note }
 export async function addDoctor(req, res) {
   try {
     const { doctorId, note } = req.body;
@@ -124,7 +121,6 @@ export async function addDoctor(req, res) {
   }
 }
 
-// DELETE /api/plannings/:id/doctors/:pcdId
 export async function removeDoctor(req, res) {
   try {
     const pcd = await PlanConfigurationDoctor.findOneAndDelete({
@@ -139,9 +135,6 @@ export async function removeDoctor(req, res) {
   }
 }
 
-// POST /api/plannings/:id/checkin   — sets status "i_went", drops a
-// performer_i_went_location Address, and creates a matching Attendance
-// row (mirrors Rails create_addressable with status "i_went")
 export function checkIn(io) {
   return async (req, res) => {
     try {
@@ -171,8 +164,13 @@ export function checkIn(io) {
         employee: plan.performer,
         attendanceType: "checkin",
         attendanceTime: new Date(),
+        attendanceStatus: await computeAttendanceStatus("checkin", new Date()),
         viaPlan: plan._id,
       });
+
+      const distanceFromHospital = plan.hospital
+        ? distanceInMeters(lat, lng, plan.hospital.lat, plan.hospital.lng)
+        : null;
 
       const hospitalName = plan.hospital?.name || plan.pharmacy?.pharmacyName;
       io.emit("attendance:new", {
@@ -181,9 +179,10 @@ export function checkIn(io) {
         hospitalName,
         address,
         attendanceType: "checkin",
+        distanceFromHospital,
       });
 
-      res.json({ plan, attendance });
+      res.json({ plan, attendance, distanceFromHospital });
     } catch (err) {
       console.error("checkIn failed:", err);
       res.status(500).json({ error: "Server error" });
@@ -191,7 +190,6 @@ export function checkIn(io) {
   };
 }
 
-// POST /api/plannings/:id/checkout — same idea, status "i_left"
 export function checkOut(io) {
   return async (req, res) => {
     try {
@@ -221,8 +219,13 @@ export function checkOut(io) {
         employee: plan.performer,
         attendanceType: "checkout",
         attendanceTime: new Date(),
+        attendanceStatus: await computeAttendanceStatus("checkout", new Date()),
         viaPlan: plan._id,
       });
+
+      const distanceFromHospital = plan.hospital
+        ? distanceInMeters(lat, lng, plan.hospital.lat, plan.hospital.lng)
+        : null;
 
       const hospitalName = plan.hospital?.name || plan.pharmacy?.pharmacyName;
       io.emit("attendance:new", {
@@ -231,9 +234,10 @@ export function checkOut(io) {
         hospitalName,
         address,
         attendanceType: "checkout",
+        distanceFromHospital,
       });
 
-      res.json({ plan, attendance });
+      res.json({ plan, attendance, distanceFromHospital });
     } catch (err) {
       console.error("checkOut failed:", err);
       res.status(500).json({ error: "Server error" });
@@ -241,8 +245,61 @@ export function checkOut(io) {
   };
 }
 
-// GET /api/plannings/:id/doctors-available — doctors tied to the plan's
-// hospital, for the "add doctor" dropdown
+export async function getVisitDurations(req, res) {
+  try {
+    const { performer, date } = req.query;
+    if (!performer) return res.status(400).json({ error: "performer is required" });
+
+    const day = date ? new Date(date) : new Date();
+    const startOfDay = new Date(day);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(day);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const plans = await PlanConfiguration.find({
+      performer,
+      iWentAt: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .populate("hospital", "name")
+      .populate("pharmacy", "pharmacyName")
+      .sort({ iWentAt: 1 });
+
+    const visits = plans.map((plan) => {
+      const locationName = plan.hospital?.name || plan.pharmacy?.pharmacyName || "Unknown";
+      const durationMinutes =
+        plan.iWentAt && plan.iLeftAt
+          ? Math.round((new Date(plan.iLeftAt) - new Date(plan.iWentAt)) / 60000)
+          : null;
+
+      return {
+        planId: plan._id,
+        locationName,
+        checkinTime: plan.iWentAt,
+        checkoutTime: plan.iLeftAt,
+        durationMinutes,
+      };
+    });
+
+    const gaps = [];
+    for (let i = 1; i < visits.length; i++) {
+      const prev = visits[i - 1];
+      const curr = visits[i];
+      if (!prev.checkoutTime || !curr.checkinTime) continue;
+
+      gaps.push({
+        fromLocation: prev.locationName,
+        toLocation: curr.locationName,
+        gapMinutes: Math.round((new Date(curr.checkinTime) - new Date(prev.checkoutTime)) / 60000),
+      });
+    }
+
+    res.json({ visits, gaps });
+  } catch (err) {
+    console.error("getVisitDurations failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 export async function doctorsForPlanHospital(req, res) {
   try {
     const plan = await PlanConfiguration.findById(req.params.id);
@@ -251,8 +308,6 @@ export async function doctorsForPlanHospital(req, res) {
     const hospital = await Hospital.findById(plan.hospital);
     if (!hospital) return res.json([]);
 
-    // doctors embed their hospital links — find any doctor whose
-    // hospitals[] array contains this hospital id
     const Doctor = (await import("../../models/Doctor.js")).default;
     const doctors = await Doctor.find({ "hospitals.hospital": plan.hospital, isActive: true });
 

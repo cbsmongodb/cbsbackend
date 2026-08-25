@@ -1,10 +1,8 @@
 import PlanConfiguration from "../../models/PlanConfiguration.js";
 import Attendance from "../../models/Attendance.js";
+import Employee from "../../models/Employee.js";
+import Group from "../../models/Group.js";
 
-// "Employee Performance" report — Rails builds this from PlanConfiguration
-// (visit counts per performer/doctor), not from a flat sales table. This
-// is a placeholder aggregation (visit counts only) — swap in the exact
-// Rails calculation once the real formula is confirmed.
 export async function getEfficiencyReport(req, res) {
   try {
     const filter = {};
@@ -49,14 +47,56 @@ export async function getEfficiencyReport(req, res) {
   }
 }
 
-// placeholder — real reimbursement calculation uses Region.reimbursementAmt
-// per performer/period, joined through the hospital/pharmacy on each plan.
-// Comes from the Rails app's reimbursement_export scope on PlanConfiguration.
 export async function getReimbursementReport(req, res) {
-  res.json({ note: "TODO: port reimbursement calculation from Rails", rows: [] });
+  try {
+    const { from, to, performer } = req.query;
+
+    const filter = { status: { $in: ["i_left", "completed"] } };
+    if (from || to) {
+      filter.period = {};
+      if (from) filter.period.$gte = new Date(from);
+      if (to) filter.period.$lte = new Date(to);
+    }
+    if (performer) filter.performer = performer;
+
+    const plans = await PlanConfiguration.find(filter).select("performer period");
+
+    const daysByPerformer = new Map();
+    for (const plan of plans) {
+      const performerId = String(plan.performer);
+      const dayKey = new Date(plan.period).toISOString().slice(0, 10);
+      if (!daysByPerformer.has(performerId)) daysByPerformer.set(performerId, new Set());
+      daysByPerformer.get(performerId).add(dayKey);
+    }
+
+    const rows = [];
+    for (const [performerId, days] of daysByPerformer.entries()) {
+      const employee = await Employee.findById(performerId)
+        .select("firstName lastName group")
+        .populate({ path: "group", populate: "region" });
+
+      const region = employee?.group?.region;
+      const ratePerDay = region?.reimbursementAmt || 0;
+      const daysWorked = days.size;
+
+      rows.push({
+        employee: employee ? { firstName: employee.firstName, lastName: employee.lastName } : null,
+        regionName: region?.name || "Unassigned",
+        daysWorked,
+        ratePerDay,
+        totalReimbursement: Math.round(daysWorked * ratePerDay * 100) / 100,
+      });
+    }
+
+    rows.sort((a, b) => (a.employee?.firstName || "").localeCompare(b.employee?.firstName || ""));
+
+    res.json(rows);
+  } catch (err) {
+    console.error("getReimbursementReport failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 }
 
-// raw attendance rows for the reporting period
 export async function getAttendanceReport(req, res) {
   try {
     const filter = {};

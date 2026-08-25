@@ -12,8 +12,6 @@ import { connectDB } from "../config/db.js";
 import Role from "../models/Role.js";
 import Employee from "../models/Employee.js";
 
-// every resource key the real sidebar checks — admin gets full read+write
-// on all of them
 const ALL_RESOURCES = [
   "home", "plannings", "fullfill_plan", "receipe",
   "drugs", "product_types", "manufacturers", "manufacturer_countries",
@@ -23,12 +21,24 @@ const ALL_RESOURCES = [
   "evaluation_criteria", "regions", "attendances", "sales",
   "reimbursement_report", "budgets", "employee_accounts",
   "employee_targets", "doctor_targets", "employee_sales", "doctor_sales",
+  "leaves",
 ];
 
 function buildFullPrivileges() {
   const privileges = {};
   ALL_RESOURCES.forEach((key) => {
-    privileges[key] = { read: 1, write: 1, dashboard: 1, live_feeds: 1, last_locations: 1, analytics: 1 };
+    privileges[key] = {
+      read: 1,
+      add: 1,
+      update: 1,
+      delete: 1,
+      import: 1,
+      export: 1,
+      dashboard: 1,
+      live_feeds: 1,
+      last_locations: 1,
+      analytics: 1,
+    };
   });
   return privileges;
 }
@@ -53,6 +63,12 @@ async function seed() {
   if (!adminRole) {
     adminRole = await Role.create({ name: "admin", privileges: buildFullPrivileges() });
     console.log("Created 'admin' role.");
+  } else {
+    // if the role already existed with the old broken "write" structure,
+    // fix it in place instead of requiring a manual delete
+    adminRole.privileges = buildFullPrivileges();
+    await adminRole.save();
+    console.log("Updated existing 'admin' role's privileges to the correct structure.");
   }
 
   const existing = await Employee.findOne({ email: email.toLowerCase() });
@@ -69,7 +85,7 @@ async function seed() {
     email: email.toLowerCase(),
     password: hashed,
     role: adminRole._id,
-    active: true,
+    isActive: true,
   });
 
   console.log(`Admin created: ${employee.email} (id: ${employee._id})`);

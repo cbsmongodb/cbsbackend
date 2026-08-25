@@ -1,15 +1,17 @@
 import "dotenv/config";
 import http from "http";
 import { Server } from "socket.io";
+import cron from "node-cron";
 
 import { createApp } from "./app.js";
 import { connectDB } from "./config/db.js";
 import { initLiveFeedSocket } from "./sockets/liveFeed.socket.js";
+import { runStockAlertJob } from "./jobs/stockAlertJob.js";
+import { runCarryOverJob } from "./jobs/carryOverJob.js";
 
 async function start() {
   await connectDB();
 
-  // socket.io needs a raw http server, not the express app directly
   const httpServer = http.createServer();
 
   const io = new Server(httpServer, {
@@ -24,6 +26,9 @@ async function start() {
   httpServer.listen(port, () => {
     console.log(`Server + Socket.io listening on port ${port}`);
   });
+
+  cron.schedule("0 8 * * *", runStockAlertJob);
+  cron.schedule("30 0 1 * *", runCarryOverJob);
 }
 
 start();

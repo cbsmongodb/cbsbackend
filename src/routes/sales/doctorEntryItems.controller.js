@@ -1,5 +1,6 @@
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
+import CoefficientOverride from "../../models/CoefficientOverride.js";
 
 function normalizeToMonthStart(dateLike) {
   const d = new Date(dateLike);
@@ -17,15 +18,31 @@ async function recalculateForPeriod(employeeId, period) {
     totalsByDrug[key].prescription += item.prescription || 0;
   }
 
+  const overrides = await CoefficientOverride.find({ employee: employeeId, period });
+  const overrideByDrug = new Map(overrides.map((o) => [String(o.drug), o.coefficient]));
+
   const bulkOps = items.map((item) => {
-    const totals = totalsByDrug[String(item.drug)];
-    const coefficient = totals.prescription > 0 ? totals.sale / totals.prescription : 0;
+    const drugKey = String(item.drug);
+    let coefficient;
+
+    if (overrideByDrug.has(drugKey)) {
+      coefficient = overrideByDrug.get(drugKey);
+    } else {
+      const totals = totalsByDrug[drugKey];
+      coefficient = totals.prescription > 0 ? totals.sale / totals.prescription : 0;
+    }
+
     const totalBudget = item.prescription * (item.budget || 0) * coefficient;
 
     return {
       updateOne: {
         filter: { _id: item._id },
-        update: { $set: { totalBudget: Math.round(totalBudget * 100) / 100 } },
+        update: {
+          $set: {
+            coefficient: Math.round(coefficient * 10000) / 10000,
+            totalBudget: Math.round(totalBudget * 100) / 100,
+          },
+        },
       },
     };
   });
@@ -212,6 +229,68 @@ export async function deleteEntries(req, res) {
     res.json({ success: true, deletedCount: result.deletedCount });
   } catch (err) {
     console.error("deleteEntries failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function getCoefficientOverrides(req, res) {
+  try {
+    const { employee, period } = req.query;
+    if (!employee || !period) {
+      return res.status(400).json({ error: "employee and period are required" });
+    }
+    const periodDate = normalizeToMonthStart(period);
+
+    const overrides = await CoefficientOverride.find({ employee, period: periodDate })
+      .populate("drug", "name")
+      .populate("setBy", "firstName lastName");
+
+    res.json(overrides);
+  } catch (err) {
+    console.error("getCoefficientOverrides failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function setCoefficientOverride(req, res) {
+  try {
+    const { employee, drug, period, coefficient, note } = req.body;
+    if (!employee || !drug || !period || coefficient === undefined) {
+      return res.status(400).json({ error: "employee, drug, period, and coefficient are required" });
+    }
+
+    const periodDate = normalizeToMonthStart(period);
+
+    const override = await CoefficientOverride.findOneAndUpdate(
+      { employee, drug, period: periodDate },
+      { employee, drug, period: periodDate, coefficient, note, setBy: req.employee._id },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await recalculateForPeriod(employee, periodDate);
+
+    const populated = await override.populate("drug", "name");
+    res.status(201).json(populated);
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({ error: messages.join(", ") });
+    }
+    console.error("setCoefficientOverride failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function deleteCoefficientOverride(req, res) {
+  try {
+    const override = await CoefficientOverride.findByIdAndDelete(req.params.id);
+    if (!override) return res.status(404).json({ error: "Not found" });
+
+    await recalculateForPeriod(override.employee, override.period);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("deleteCoefficientOverride failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
