@@ -71,21 +71,11 @@ async function seed() {
 
   const existing = await Employee.findOne({ email: email.toLowerCase() });
   if (existing) {
-    let changed = false;
-    if (!existing.isActive) {
-      existing.isActive = true;
-      changed = true;
-    }
-    if (String(existing.role) !== String(adminRole._id)) {
-      existing.role = adminRole._id;
-      changed = true;
-    }
-    if (changed) {
-      await existing.save();
-      console.log(`Employee ${email} already existed — fixed isActive/role and re-saved.`);
-    } else {
-      console.log(`Employee with email ${email} already exists and looks correct — nothing to do.`);
-    }
+    existing.isActive = true;
+    existing.role = adminRole._id;
+    existing.password = await bcrypt.hash(password, 10);
+    await existing.save();
+    console.log(`Employee ${email} already existed — reset isActive/role/password and saved.`);
     await mongoose.disconnect();
     return;
   }
