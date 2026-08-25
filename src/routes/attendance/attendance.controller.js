@@ -5,8 +5,6 @@ import PlanConfiguration from "../../models/PlanConfiguration.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 import { distanceInMeters } from "../../utils/geo.js";
 
-// ---------- 1. current_location ----------
-
 export async function setCurrentLocation(req, res) {
   try {
     const { lat, lng, address } = req.body;
@@ -79,8 +77,6 @@ export async function getCurrentLocations(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
-
-// ---------- 2. daily attendance (checkin/checkout) ----------
 
 export function markAttendance(io) {
   return async (req, res) => {
@@ -166,27 +162,27 @@ export async function getLiveFeed(req, res) {
       .populate("hospital", "name lat lng address");
 
     const planIds = plans.map((p) => p._id);
-    const addresses = await Address.find({
+    const planAddresses = await Address.find({
       addressableType: "PlanConfiguration",
       addressableId: { $in: planIds },
     }).sort({ createdAt: 1 });
 
     const addressesByPlan = new Map();
-    addresses.forEach((a) => {
+    planAddresses.forEach((a) => {
       const key = String(a.addressableId);
       if (!addressesByPlan.has(key)) addressesByPlan.set(key, []);
       addressesByPlan.get(key).push(a);
     });
 
-    const feed = plans.map((plan) => {
-      const planAddresses = addressesByPlan.get(String(plan._id)) || [];
+    const planFeed = plans.map((plan) => {
+      const addrs = addressesByPlan.get(String(plan._id)) || [];
       return {
-        planId: plan._id,
+        source: "plan",
         employeeId: plan.performer?._id,
         employeeName: plan.performer?.name,
         hospitalName: plan.hospital?.name,
         status: plan.status,
-             addresses: planAddresses.map((a) => ({
+        addresses: addrs.map((a) => ({
           addressType: a.addressType,
           lat: a.lat,
           lng: a.lng,
@@ -200,7 +196,47 @@ export async function getLiveFeed(req, res) {
       };
     });
 
-    res.json(feed);
+    const standaloneAttendances = await Attendance.find({
+      attendanceTime: { $gte: startOfDay },
+      viaPlan: null,
+    })
+      .populate("employee", "firstName lastName")
+      .sort({ attendanceTime: 1 });
+
+    const attendanceIds = standaloneAttendances.map((a) => a._id);
+    const attendanceAddresses = await Address.find({
+      addressableType: "Attendance",
+      addressableId: { $in: attendanceIds },
+    });
+    const addressByAttendance = new Map(
+      attendanceAddresses.map((a) => [String(a.addressableId), a])
+    );
+
+    const attendanceFeed = standaloneAttendances
+      .map((att) => {
+        const addr = addressByAttendance.get(String(att._id));
+        if (!addr || addr.lat == null || addr.lng == null) return null;
+        return {
+          source: "daily",
+          employeeId: att.employee?._id,
+          employeeName: att.employee?.name,
+          hospitalName: null,
+          status: att.attendanceType,
+          addresses: [
+            {
+              addressType: att.attendanceType === "checkin" ? "performer_i_went_location" : "performer_i_left_location",
+              lat: addr.lat,
+              lng: addr.lng,
+              cleanAddress: addr.cleanAddress,
+              time: att.attendanceTime,
+              distanceFromHospital: null,
+            },
+          ],
+        };
+      })
+      .filter(Boolean);
+
+    res.json([...planFeed, ...attendanceFeed]);
   } catch (err) {
     console.error("getLiveFeed failed:", err);
     res.status(500).json({ error: "Server error" });

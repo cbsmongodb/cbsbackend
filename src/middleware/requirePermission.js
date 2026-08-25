@@ -25,11 +25,7 @@ export function requirePermission(resourceKey) {
             const action = METHOD_TO_ACTION[req.method] || "read";
       const resourceAccess = employee.role?.privileges?.[resourceKey];
 
-      console.log("=== requirePermission debug ===");
-      console.log("resourceKey:", resourceKey, "| action:", action);
-      console.log("employee.role (populated):", employee.role);
-      console.log("resourceAccess:", resourceAccess);
-      console.log("================================");
+     
 
       if (!resourceAccess || resourceAccess[action] !== 1) {
         return res.status(403).json({ error: "Forbidden" });

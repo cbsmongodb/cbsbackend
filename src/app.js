@@ -87,7 +87,7 @@ export function createApp(io) {
   app.use("/api/budget-requireds", budgetRequirdRoutes);
   app.use("/api/budget-requests", budgetRequestRoutes);
 
-  app.use("/api/attendance", requirePermission("attendances"), attendanceRoutes(io));
+    app.use("/api/attendance", attendanceRoutes(io));
 
   app.use("/api/plannings", requirePermission("plannings"), planningsRoutes(io));
   app.use("/api/tasks", tasksRoutes);
