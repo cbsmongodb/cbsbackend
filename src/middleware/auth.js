@@ -11,7 +11,7 @@ export async function requireAuth(req, res, next) {
 
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const employee = await Employee.findById(payload.id).populate("role");
-    if (!employee || !employee.active) {
+    if (!employee || !employee.isActive) {
       return res.status(401).json({ error: "Not authenticated" });
     }
 

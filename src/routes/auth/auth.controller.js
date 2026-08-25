@@ -18,7 +18,7 @@ export async function login(req, res) {
       .select("+password")
       .populate("role");
 
-    if (!employee || !employee.active) {
+          if (!employee || !employee.isActive) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
