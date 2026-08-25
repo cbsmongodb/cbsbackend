@@ -13,15 +13,11 @@ const employeeSchema = new mongoose.Schema(
     note: String,
     avatarUrl: String,
 
-    // Rails: enum employee_type: { field: 0, office: 1 }
     employeeType: { type: String, enum: ["field", "office"], default: "field" },
 
-    designation: { type: mongoose.Schema.Types.ObjectId, ref: "Designation", required: true },
-    // many-to-many in Rails via employee_roles — plain array here
-    roles: [{ type: mongoose.Schema.Types.ObjectId, ref: "Role" }],
+    designation: { type: mongoose.Schema.Types.ObjectId, ref: "Designation", default: null },
+    role: { type: mongoose.Schema.Types.ObjectId, ref: "Role", required: true },
 
-    // convenience denormalized links (Rails derives these through
-    // EmployeeGroup / Section.head_id / Group.head_id instead)
     group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", default: null },
     division: { type: mongoose.Schema.Types.ObjectId, ref: "Division", default: null },
 
@@ -30,7 +26,6 @@ const employeeSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Rails: def name -> "#{first_name} #{last_name}".squish
 employeeSchema.virtual("name").get(function () {
   return [this.firstName, this.lastName].filter(Boolean).join(" ");
 });
