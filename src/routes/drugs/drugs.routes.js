@@ -9,7 +9,7 @@ import { requireAuth } from "../../middleware/auth.js";
 const router = express.Router();
 router.use(requireAuth);
 
-const drugC = crud(Drug, "productType profile manufacturer producingCountry");
+const drugC = crud(Drug, "productType profiles manufacturers");
 router.get("/", drugC.getAll);
 router.post("/", drugC.createOne);
 
@@ -26,7 +26,7 @@ router.get(
       { header: "Active", key: "isActive", width: 10 },
       { header: "Expired", key: "expired", width: 10 },
     ],
-    "productType manufacturer producingCountry"
+    "productType manufacturers"
   )
 );
 
@@ -47,7 +47,7 @@ productTypeRoutes.delete("/:id", ptC.deleteOne);
 
 export const manufacturerRoutes = express.Router();
 manufacturerRoutes.use(requireAuth);
-const mC = crud(Manufacturer, "country");
+const mC = crud(Manufacturer, "producingCountry");
 manufacturerRoutes.get("/", mC.getAll);
 manufacturerRoutes.post("/", mC.createOne);
 manufacturerRoutes.get("/:id", mC.getOne);
