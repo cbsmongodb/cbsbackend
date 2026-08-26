@@ -1,12 +1,6 @@
 import jwt from "jsonwebtoken";
 import Employee from "../models/Employee.js";
 
-// Combines auth + permission check in one middleware, applied at the
-// app.js mount point for each resource — e.g.
-//   app.use("/api/hospitals", requirePermission("hospitals"), hospitalsRoutes)
-//
-// Action is derived from the HTTP method, mirroring Rails' COMMON_MAPPING:
-//   GET -> read, POST -> add, PUT/PATCH -> update, DELETE -> delete
 const METHOD_TO_ACTION = { GET: "read", POST: "add", PUT: "update", PATCH: "update", DELETE: "delete" };
 
 export function requirePermission(resourceKey) {
@@ -22,10 +16,14 @@ export function requirePermission(resourceKey) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-            const action = METHOD_TO_ACTION[req.method] || "read";
-      const resourceAccess = employee.role?.privileges?.[resourceKey];
+      const action = METHOD_TO_ACTION[req.method] || "read";
 
-     
+      if (employee.role?.name === "admin") {
+        req.employee = employee;
+        return next();
+      }
+
+      const resourceAccess = employee.role?.privileges?.[resourceKey];
 
       if (!resourceAccess || resourceAccess[action] !== 1) {
         return res.status(403).json({ error: "Forbidden" });
