@@ -1,6 +1,6 @@
 import Doctor from "../../models/Doctor.js";
 
-const POPULATE = "profile category subcategory hospitals";
+const POPULATE = "profile doctorCategory hospitals.hospital";
 
 export async function getAllDoctors(req, res) {
   try {
