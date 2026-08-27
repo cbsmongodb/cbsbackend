@@ -369,3 +369,23 @@ export async function getEmployeeDay(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+export async function getMyStatus(req, res) {
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const records = await Attendance.find({
+      employee: req.employee._id,
+      attendanceTime: { $gte: startOfDay },
+    }).sort({ attendanceTime: -1 });
+
+    const latest = records[0];
+    const nextAction = latest?.attendanceType === "checkin" ? "checkout" : "checkin";
+
+    res.json({ nextAction });
+  } catch (err) {
+    console.error("getMyStatus failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
