@@ -84,7 +84,7 @@ app.use(
     requirePermission("doctor_sub_categories"),
     doctorSubcategoryRoutes
   );
-  app.use("/api/hospitals", requirePermission("hospitals"), hospitalsRoutes);
+  app.use("/api/hospitals", requirePermission("hospitals"), hospitalsRoutes(io));
   app.use("/api/pharmacies", requirePermission("pharmacies"), pharmaciesRoutes);
   app.use("/api/profiles", requirePermission("profiles"), profilesRoutes);
 
