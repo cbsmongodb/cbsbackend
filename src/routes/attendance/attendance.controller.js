@@ -86,30 +86,18 @@ export function markAttendance(io) {
         return res.status(400).json({ error: "type must be checkin or checkout" });
       }
 
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-
-      let attendance = await Attendance.findOne({
-        employee: req.employee._id,
-        attendanceType: type,
-        attendanceTime: { $gte: startOfDay },
-      });
-
       const now = new Date();
       const attendanceStatus = await computeAttendanceStatus(type, now);
 
-      if (!attendance) {
-        attendance = await Attendance.create({
-          employee: req.employee._id,
-          attendanceType: type,
-          attendanceTime: now,
-          attendanceStatus,
-        });
-      } else {
-        attendance.attendanceTime = now;
-        attendance.attendanceStatus = attendanceStatus;
-        await attendance.save();
-      }
+      // Always create a new record — an employee can check in/out at several
+      // different hospitals throughout the day, so we must never overwrite
+      // a previous visit's record.
+      const attendance = await Attendance.create({
+        employee: req.employee._id,
+        attendanceType: type,
+        attendanceTime: now,
+        attendanceStatus,
+      });
 
       const lastLocation = await Address.findOne({
         addressableType: "Employee",
@@ -117,18 +105,14 @@ export function markAttendance(io) {
         addressType: "current_location",
       });
 
-      const attendanceAddress = await Address.findOneAndUpdate(
-        { addressableType: "Attendance", addressableId: attendance._id, addressType: "attendance" },
-        {
-          addressableType: "Attendance",
-          addressableId: attendance._id,
-          addressType: "attendance",
-          lat: lastLocation?.lat,
-          lng: lastLocation?.lng,
-          cleanAddress: lastLocation?.cleanAddress,
-        },
-        { upsert: true, new: true }
-      );
+      const attendanceAddress = await Address.create({
+        addressableType: "Attendance",
+        addressableId: attendance._id,
+        addressType: "attendance",
+        lat: lastLocation?.lat,
+        lng: lastLocation?.lng,
+        cleanAddress: lastLocation?.cleanAddress,
+      });
 
       const feedPayload = {
         id: req.employee._id,
@@ -220,7 +204,7 @@ export async function getLiveFeed(req, res) {
         if (!addr || addr.lat == null || addr.lng == null) return null;
         return {
           source: "daily",
-          groupKey: `daily-${String(att.employee?._id)}-${dayKey}`,
+          groupKey: `daily-${String(att._id)}`,
           employeeId: att.employee?._id,
           employeeName: att.employee?.name,
           hospitalName: null,
