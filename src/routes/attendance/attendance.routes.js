@@ -5,6 +5,7 @@ import {
   markAttendance,
   getLiveFeed,
   getDailyStatus,
+  getEmployeeDay,
 } from "./attendance.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -20,6 +21,7 @@ export default function attendanceRoutes(io) {
   router.post("/mark", markAttendance(io));
   router.get("/live-feed", getLiveFeed);
   router.get("/daily-status", getDailyStatus);
+  router.get("/employee-day", getEmployeeDay);
 
   return router;
 }

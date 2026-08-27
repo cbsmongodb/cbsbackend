@@ -282,3 +282,90 @@ export async function getDailyStatus(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+export async function getEmployeeDay(req, res) {
+  try {
+    const { employeeId, date } = req.query;
+    if (!employeeId) {
+      return res.status(400).json({ error: "employeeId is required" });
+    }
+
+    const day = date ? new Date(date) : new Date();
+    const startOfDay = new Date(day);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(day);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const employee = await Employee.findById(employeeId).select("firstName lastName");
+
+    const plans = await PlanConfiguration.find({
+      performer: employeeId,
+      period: { $gte: startOfDay, $lte: endOfDay },
+      status: { $in: ["i_went", "i_left", "completed"] },
+    }).populate("hospital", "name lat lng");
+
+    const planIds = plans.map((p) => p._id);
+    const planAddresses = await Address.find({
+      addressableType: "PlanConfiguration",
+      addressableId: { $in: planIds },
+    }).sort({ createdAt: 1 });
+
+    const addressesByPlan = new Map();
+    planAddresses.forEach((a) => {
+      const key = String(a.addressableId);
+      if (!addressesByPlan.has(key)) addressesByPlan.set(key, []);
+      addressesByPlan.get(key).push(a);
+    });
+
+    let visits = plans.map((plan) => {
+      const addrs = addressesByPlan.get(String(plan._id)) || [];
+      const checkin = addrs.find((a) => a.addressType === "performer_i_went_location");
+      const checkout = addrs.find((a) => a.addressType === "performer_i_left_location");
+
+      const checkinDistance =
+        checkin && plan.hospital?.lat != null && plan.hospital?.lng != null
+          ? distanceInMeters(checkin.lat, checkin.lng, plan.hospital.lat, plan.hospital.lng)
+          : null;
+      const checkoutDistance =
+        checkout && plan.hospital?.lat != null && plan.hospital?.lng != null
+          ? distanceInMeters(checkout.lat, checkout.lng, plan.hospital.lat, plan.hospital.lng)
+          : null;
+
+      return {
+        hospitalName: plan.hospital?.name || "უცნობი",
+        hospitalLat: plan.hospital?.lat,
+        hospitalLng: plan.hospital?.lng,
+        checkinTime: checkin?.createdAt || null,
+        checkoutTime: checkout?.createdAt || null,
+        checkinDistance,
+        checkoutDistance,
+        durationMinutes:
+          checkin && checkout
+            ? Math.round((new Date(checkout.createdAt) - new Date(checkin.createdAt)) / 60000)
+            : null,
+      };
+    });
+
+    visits = visits
+      .filter((v) => v.checkinTime)
+      .sort((a, b) => new Date(a.checkinTime) - new Date(b.checkinTime));
+
+    for (let i = 1; i < visits.length; i++) {
+      const prevCheckout = visits[i - 1].checkoutTime;
+      const currentCheckin = visits[i].checkinTime;
+      visits[i].travelMinutesFromPrevious =
+        prevCheckout && currentCheckin
+          ? Math.round((new Date(currentCheckin) - new Date(prevCheckout)) / 60000)
+          : null;
+    }
+
+    res.json({
+      employeeName: employee?.name || "უცნობი",
+      date: startOfDay,
+      visits,
+    });
+  } catch (err) {
+    console.error("getEmployeeDay failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
