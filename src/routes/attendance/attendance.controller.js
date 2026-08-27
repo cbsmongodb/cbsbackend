@@ -163,6 +163,8 @@ export async function getLiveFeed(req, res) {
         employeeId: plan.performer?._id,
         employeeName: plan.performer?.name,
         hospitalName: plan.hospital?.name,
+        hospitalLat: plan.hospital?.lat ?? null,
+        hospitalLng: plan.hospital?.lng ?? null,
         status: plan.status,
         addresses: addrs.map((a) => ({
           addressType: a.addressType,
@@ -194,9 +196,6 @@ export async function getLiveFeed(req, res) {
       attendanceAddresses.map((a) => [String(a.addressableId), a])
     );
 
-    // Pair up consecutive checkin/checkout per employee chronologically,
-    // so a checkin and its matching checkout share the same groupKey and
-    // can be shown together on the map.
     const byEmployee = new Map();
     standaloneAttendances.forEach((att) => {
       const key = String(att.employee?._id);
@@ -232,6 +231,8 @@ export async function getLiveFeed(req, res) {
           employeeId: att.employee?._id,
           employeeName: att.employee?.name,
           hospitalName: null,
+          hospitalLat: null,
+          hospitalLng: null,
           status: att.attendanceType,
           addresses: [
             {
