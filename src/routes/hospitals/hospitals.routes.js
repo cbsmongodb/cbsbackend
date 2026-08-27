@@ -103,6 +103,9 @@ router.post("/geocode-missing", async (req, res) => {
         const response = await fetch(url, {
           headers: { "User-Agent": "CBS-Admin/1.0 (internal pharma admin tool)" },
         });
+              if (!response.ok) {
+          console.error(`Nominatim returned ${response.status} for "${hospital.address}"`);
+        }
         const results = await response.json();
         if (results.length > 0) {
           hospital.lat = parseFloat(results[0].lat);
@@ -112,7 +115,8 @@ router.post("/geocode-missing", async (req, res) => {
         } else {
           failed++;
         }
-      } catch {
+          } catch (err) {
+        console.error(`geocode failed for "${hospital.address}":`, err.message);
         failed++;
       }
       await new Promise((r) => setTimeout(r, 1100));
