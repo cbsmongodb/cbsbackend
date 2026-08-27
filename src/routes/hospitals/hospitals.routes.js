@@ -28,6 +28,18 @@ export default function hospitalsRoutes(io) {
     )
   );
 
+  router.get("/missing-coordinates", async (req, res) => {
+    try {
+      const hospitals = await Hospital.find({
+        $or: [{ lat: null }, { lat: { $exists: false } }],
+      }).select("name address");
+      res.json(hospitals);
+    } catch (err) {
+      console.error("missing-coordinates failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
   router.post("/bulk-import", async (req, res) => {
     try {
       const { rows } = req.body;
