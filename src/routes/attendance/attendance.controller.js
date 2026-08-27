@@ -89,9 +89,6 @@ export function markAttendance(io) {
       const now = new Date();
       const attendanceStatus = await computeAttendanceStatus(type, now);
 
-      // Always create a new record — an employee can check in/out at several
-      // different hospitals throughout the day, so we must never overwrite
-      // a previous visit's record.
       const attendance = await Attendance.create({
         employee: req.employee._id,
         attendanceType: type,
@@ -137,7 +134,6 @@ export async function getLiveFeed(req, res) {
   try {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
-    const dayKey = startOfDay.toISOString().slice(0, 10);
 
     const plans = await PlanConfiguration.find({
       period: { $gte: startOfDay },
@@ -198,13 +194,41 @@ export async function getLiveFeed(req, res) {
       attendanceAddresses.map((a) => [String(a.addressableId), a])
     );
 
+    // Pair up consecutive checkin/checkout per employee chronologically,
+    // so a checkin and its matching checkout share the same groupKey and
+    // can be shown together on the map.
+    const byEmployee = new Map();
+    standaloneAttendances.forEach((att) => {
+      const key = String(att.employee?._id);
+      if (!byEmployee.has(key)) byEmployee.set(key, []);
+      byEmployee.get(key).push(att);
+    });
+
+    const groupKeyByAttendanceId = new Map();
+    for (const records of byEmployee.values()) {
+      let pendingCheckin = null;
+      for (const att of records) {
+        if (att.attendanceType === "checkin") {
+          pendingCheckin = att;
+          groupKeyByAttendanceId.set(String(att._id), `pair-${att._id}`);
+        } else if (att.attendanceType === "checkout") {
+          if (pendingCheckin) {
+            groupKeyByAttendanceId.set(String(att._id), `pair-${pendingCheckin._id}`);
+            pendingCheckin = null;
+          } else {
+            groupKeyByAttendanceId.set(String(att._id), `pair-${att._id}`);
+          }
+        }
+      }
+    }
+
     const attendanceFeed = standaloneAttendances
       .map((att) => {
         const addr = addressByAttendance.get(String(att._id));
         if (!addr || addr.lat == null || addr.lng == null) return null;
         return {
           source: "daily",
-          groupKey: `daily-${String(att._id)}`,
+          groupKey: groupKeyByAttendanceId.get(String(att._id)),
           employeeId: att.employee?._id,
           employeeName: att.employee?.name,
           hospitalName: null,
