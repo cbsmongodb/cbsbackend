@@ -86,6 +86,45 @@ router.post("/bulk-import", async (req, res) => {
   }
 });
 
+router.post("/geocode-missing", async (req, res) => {
+  try {
+    const hospitals = await Hospital.find({
+      address: { $exists: true, $ne: "" },
+      $or: [{ lat: null }, { lat: { $exists: false } }],
+    });
+
+    let geocoded = 0;
+    let failed = 0;
+
+    for (const hospital of hospitals) {
+      try {
+        const query = encodeURIComponent(hospital.address);
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${query}`;
+        const response = await fetch(url, {
+          headers: { "User-Agent": "CBS-Admin/1.0 (internal pharma admin tool)" },
+        });
+        const results = await response.json();
+        if (results.length > 0) {
+          hospital.lat = parseFloat(results[0].lat);
+          hospital.lng = parseFloat(results[0].lon);
+          await hospital.save();
+          geocoded++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+      await new Promise((r) => setTimeout(r, 1100));
+    }
+
+    res.json({ total: hospitals.length, geocoded, failed });
+  } catch (err) {
+    console.error("geocode-missing hospitals failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 router.get("/:id", c.getOne);
 router.put("/:id", c.updateOne);
 router.delete("/:id", c.deleteOne);
