@@ -3,7 +3,7 @@ import Hospital from "../../models/Hospital.js";
 import Region from "../../models/Region.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
-import { geocodeAddress } from "../../utils/geocode.js";
+import { geocodeAddress, searchAddress } from "../../utils/geocode.js";
 
 export default function hospitalsRoutes(io) {
   const router = express.Router();
@@ -36,6 +36,20 @@ export default function hospitalsRoutes(io) {
       res.json(hospitals);
     } catch (err) {
       console.error("missing-coordinates failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.get("/geocode-search", async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q || q.trim().length < 2) {
+        return res.status(400).json({ error: "q is required (min 2 chars)" });
+      }
+      const results = await searchAddress(q);
+      res.json(results);
+    } catch (err) {
+      console.error("geocode-search failed:", err);
       res.status(500).json({ error: "Server error" });
     }
   });
