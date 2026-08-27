@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { geocodeAddress } from "../utils/geocode.js";
 
 const hospitalSchema = new mongoose.Schema(
   {
@@ -14,5 +15,16 @@ const hospitalSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+hospitalSchema.pre("save", async function (next) {
+  if (this.isModified("address") && this.address && (this.lat == null || this.lng == null)) {
+    const coords = await geocodeAddress(this.address);
+    if (coords) {
+      this.lat = coords.lat;
+      this.lng = coords.lng;
+    }
+  }
+  next();
+});
 
 export default mongoose.model("Hospital", hospitalSchema);
