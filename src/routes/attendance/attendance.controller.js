@@ -153,6 +153,7 @@ export async function getLiveFeed(req, res) {
   try {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
+    const dayKey = startOfDay.toISOString().slice(0, 10);
 
     const plans = await PlanConfiguration.find({
       period: { $gte: startOfDay },
@@ -178,6 +179,7 @@ export async function getLiveFeed(req, res) {
       const addrs = addressesByPlan.get(String(plan._id)) || [];
       return {
         source: "plan",
+        groupKey: String(plan._id),
         employeeId: plan.performer?._id,
         employeeName: plan.performer?.name,
         hospitalName: plan.hospital?.name,
@@ -218,6 +220,7 @@ export async function getLiveFeed(req, res) {
         if (!addr || addr.lat == null || addr.lng == null) return null;
         return {
           source: "daily",
+          groupKey: `daily-${String(att.employee?._id)}-${dayKey}`,
           employeeId: att.employee?._id,
           employeeName: att.employee?.name,
           hospitalName: null,
@@ -317,7 +320,7 @@ export async function getEmployeeDay(req, res) {
       addressesByPlan.get(key).push(a);
     });
 
-    let visits = plans.map((plan) => {
+    const planVisits = plans.map((plan) => {
       const addrs = addressesByPlan.get(String(plan._id)) || [];
       const checkin = addrs.find((a) => a.addressType === "performer_i_went_location");
       const checkout = addrs.find((a) => a.addressType === "performer_i_left_location");
@@ -346,7 +349,59 @@ export async function getEmployeeDay(req, res) {
       };
     });
 
-    visits = visits
+    const standaloneAttendances = await Attendance.find({
+      employee: employeeId,
+      attendanceTime: { $gte: startOfDay, $lte: endOfDay },
+      viaPlan: null,
+    }).sort({ attendanceTime: 1 });
+
+    const standaloneVisits = [];
+    let openCheckin = null;
+    for (const att of standaloneAttendances) {
+      if (att.attendanceType === "checkin") {
+        if (openCheckin) {
+          standaloneVisits.push({
+            hospitalName: "სტანდარტული ჩექინი",
+            hospitalLat: null,
+            hospitalLng: null,
+            checkinTime: openCheckin.attendanceTime,
+            checkoutTime: null,
+            checkinDistance: null,
+            checkoutDistance: null,
+            durationMinutes: null,
+          });
+        }
+        openCheckin = att;
+      } else if (att.attendanceType === "checkout") {
+        standaloneVisits.push({
+          hospitalName: "სტანდარტული ჩექინი",
+          hospitalLat: null,
+          hospitalLng: null,
+          checkinTime: openCheckin?.attendanceTime || null,
+          checkoutTime: att.attendanceTime,
+          checkinDistance: null,
+          checkoutDistance: null,
+          durationMinutes: openCheckin
+            ? Math.round((new Date(att.attendanceTime) - new Date(openCheckin.attendanceTime)) / 60000)
+            : null,
+        });
+        openCheckin = null;
+      }
+    }
+    if (openCheckin) {
+      standaloneVisits.push({
+        hospitalName: "სტანდარტული ჩექინი",
+        hospitalLat: null,
+        hospitalLng: null,
+        checkinTime: openCheckin.attendanceTime,
+        checkoutTime: null,
+        checkinDistance: null,
+        checkoutDistance: null,
+        durationMinutes: null,
+      });
+    }
+
+    let visits = [...planVisits, ...standaloneVisits]
       .filter((v) => v.checkinTime)
       .sort((a, b) => new Date(a.checkinTime) - new Date(b.checkinTime));
 
