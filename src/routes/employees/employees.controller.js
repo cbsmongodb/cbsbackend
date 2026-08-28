@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import Employee from "../../models/Employee.js";
 
-const POPULATE = "role designation section group region division";
+const POPULATE = "role designation group division";
 
 export async function getAllEmployees(req, res) {
   try {
