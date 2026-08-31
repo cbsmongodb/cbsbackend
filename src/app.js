@@ -118,7 +118,7 @@ app.use(
 
   app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 
-  app.use("/api/notifications", notificationsRoutes);
+  app.use("/api/notifications", notificationsRoutes(io));
 
   app.use("/api/config/plan", planConfigRoutes);
   app.use("/api/config/notifications", notificationConfigRoutes);

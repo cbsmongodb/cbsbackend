@@ -4,15 +4,19 @@ import {
   markAsRead,
   markAllAsRead,
   clearAll,
+  sendTestNotification,
 } from "./notifications.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
-const router = express.Router();
-router.use(requireAuth);
+export default function notificationsRoutes(io) {
+  const router = express.Router();
+  router.use(requireAuth);
 
-router.get("/", getMyNotifications);
-router.post("/read-all", markAllAsRead);
-router.post("/:id/read", markAsRead);
-router.delete("/", clearAll);
+  router.get("/", getMyNotifications);
+  router.post("/read-all", markAllAsRead);
+  router.post("/:id/read", markAsRead);
+  router.delete("/", clearAll);
+  router.post("/send-test", sendTestNotification(io));
 
-export default router;
+  return router;
+}
