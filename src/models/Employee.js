@@ -15,6 +15,9 @@ const employeeSchema = new mongoose.Schema(
 
     employeeType: { type: String, enum: ["field", "office"], default: "field" },
 
+    // 0=Sunday, 1=Monday, ... 6=Saturday — defaults to a standard Mon-Fri week
+    workDays: { type: [Number], default: [1, 2, 3, 4, 5] },
+
     designation: { type: mongoose.Schema.Types.ObjectId, ref: "Designation", default: null },
     role: { type: mongoose.Schema.Types.ObjectId, ref: "Role", required: true },
 
