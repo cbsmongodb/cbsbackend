@@ -100,6 +100,7 @@ export async function getDoctorSnapshot(req, res) {
     res.json({
       hospital: currentItems[0]?.hospital || previousItem?.hospital || null,
       bank: currentItems[0]?.bank || previousItem?.bank,
+      visits: currentItems[0]?.visits || "",
       issuedBudget: currentItems[0]?.issuedBudget || 0,
       drugs: currentItems.map((item) => ({
         drugId: item.drug._id,
@@ -137,6 +138,8 @@ export async function submitEntries(req, res) {
             hospital: entry.hospitalId || null,
             period: periodDate,
             bank: entry.bank,
+            visits: entry.visits || "",
+            issuedBudget: entry.issuedBudget || 0,
             quota: drugRow.quota || 0,
             prescription: drugRow.prescription || 0,
             sale: drugRow.sale || 0,
