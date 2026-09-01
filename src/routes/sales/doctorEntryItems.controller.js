@@ -3,7 +3,12 @@ import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
 
 function normalizeToMonthStart(dateLike) {
-  const d = new Date(dateLike);
+  let value = dateLike;
+  if (typeof value === "string" && value.includes("/")) {
+    const [mm, yyyy] = value.split("/");
+    value = `${yyyy}-${mm}-01`;
+  }
+  const d = new Date(value);
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
@@ -108,9 +113,7 @@ export async function getListing(req, res) {
       return res.status(400).json({ error: "employee and period are required" });
     }
 
-    const periodDate = normalizeToMonthStart(
-      period.includes("/") ? `${period.split("/")[1]}-${period.split("/")[0]}-01` : period
-    );
+    const periodDate = normalizeToMonthStart(period);
 
     const items = await DoctorEntryItem.find({ employee, period: periodDate })
       .populate("doctor", "firstName lastName uniqueNumber")
