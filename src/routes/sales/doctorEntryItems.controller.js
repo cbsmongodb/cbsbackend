@@ -7,9 +7,17 @@ function normalizeToMonthStart(dateLike) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
+function previousPeriodOf(period) {
+  const d = new Date(period);
+  return new Date(d.getFullYear(), d.getMonth() - 1, 1);
+}
+
 async function recalculateForPeriod(employeeId, period) {
   const items = await DoctorEntryItem.find({ employee: employeeId, period });
+  if (items.length === 0) return;
 
+  // Step 1 — coefficient & totalBudget per item (drug totals aggregated
+  // across all doctors for this employee+drug+period, same as before).
   const totalsByDrug = {};
   for (const item of items) {
     const key = String(item.drug);
@@ -21,7 +29,10 @@ async function recalculateForPeriod(employeeId, period) {
   const overrides = await CoefficientOverride.find({ employee: employeeId, period });
   const overrideByDrug = new Map(overrides.map((o) => [String(o.drug), o.coefficient]));
 
-  const bulkOps = items.map((item) => {
+  const coefficientByItemId = new Map();
+  const totalBudgetByItemId = new Map();
+
+  for (const item of items) {
     const drugKey = String(item.drug);
     let coefficient;
 
@@ -33,19 +44,59 @@ async function recalculateForPeriod(employeeId, period) {
     }
 
     const totalBudget = item.prescription * (item.budget || 0) * coefficient;
+    coefficientByItemId.set(String(item._id), Math.round(coefficient * 10000) / 10000);
+    totalBudgetByItemId.set(String(item._id), Math.round(totalBudget * 100) / 100);
+  }
+
+  // Step 2 — plannedBudget per doctor = sum of totalBudget across all of
+  // that doctor's drugs this period (matches the spreadsheet's
+  // "PALAGAEMI BIUJET" = SUM of every drug's "SUM BIUJET" column).
+  const plannedBudgetByDoctor = {};
+  for (const item of items) {
+    const doctorKey = String(item.doctor);
+    const tb = totalBudgetByItemId.get(String(item._id)) || 0;
+    plannedBudgetByDoctor[doctorKey] = (plannedBudgetByDoctor[doctorKey] || 0) + tb;
+  }
+
+  // Step 3 — carry-forward: this month's analysisOfPreviousMonth comes
+  // from last month's analysisOfCurrentMonth for the same
+  // employee+doctor+drug (rolling balance across months).
+  const prevPeriod = previousPeriodOf(period)
+  const prevItems = await DoctorEntryItem.find({
+    employee: employeeId,
+    period: prevPeriod,
+    doctor: { $in: items.map((i) => i.doctor) },
+  })
+  const prevAnalysisByKey = new Map(
+    prevItems.map((p) => [`${p.doctor}_${p.drug}`, p.analysisOfCurrentMonth || 0])
+  )
+
+  const bulkOps = items.map((item) => {
+    const doctorKey = String(item.doctor)
+    const plannedBudget = Math.round((plannedBudgetByDoctor[doctorKey] || 0) * 100) / 100
+    const issuedBudget = item.issuedBudget || 0
+    const difference = Math.round((plannedBudget - issuedBudget) * 100) / 100
+    const analysisOfPreviousMonth = prevAnalysisByKey.get(`${item.doctor}_${item.drug}`) || 0
+    const budgetCalculation = Math.round((difference + analysisOfPreviousMonth) * 100) / 100
+    const analysisOfCurrentMonth = budgetCalculation
 
     return {
       updateOne: {
         filter: { _id: item._id },
         update: {
           $set: {
-            coefficient: Math.round(coefficient * 10000) / 10000,
-            totalBudget: Math.round(totalBudget * 100) / 100,
+            coefficient: coefficientByItemId.get(String(item._id)),
+            totalBudget: totalBudgetByItemId.get(String(item._id)),
+            plannedBudget,
+            difference,
+            analysisOfPreviousMonth,
+            budgetCalculation,
+            analysisOfCurrentMonth,
           },
         },
       },
-    };
-  });
+    }
+  })
 
   if (bulkOps.length) await DoctorEntryItem.bulkWrite(bulkOps);
 }
