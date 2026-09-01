@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { geocodeAddress } from "../utils/geocode.js";
 
 const employeeSchema = new mongoose.Schema(
   {
@@ -7,7 +8,6 @@ const employeeSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true, select: false },
 
-    username: String,
     personnelNumber: String,
     phoneNumber: String,
     note: String,
@@ -15,7 +15,6 @@ const employeeSchema = new mongoose.Schema(
 
     employeeType: { type: String, enum: ["field", "office"], default: "field" },
 
-    // 0=Sunday, 1=Monday, ... 6=Saturday — defaults to a standard Mon-Fri week
     workDays: { type: [Number], default: [1, 2, 3, 4, 5] },
 
     designation: { type: mongoose.Schema.Types.ObjectId, ref: "Designation", default: null },
