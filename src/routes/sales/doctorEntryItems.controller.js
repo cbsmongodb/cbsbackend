@@ -251,6 +251,20 @@ export async function updateEntryItem(req, res) {
   }
 }
 
+export async function deleteEntryItem(req, res) {
+  try {
+    const item = await DoctorEntryItem.findByIdAndDelete(req.params.id);
+    if (!item) return res.status(404).json({ error: "Entry not found" });
+
+    await recalculateForPeriod(item.employee, item.period);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("deleteEntryItem failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 export async function deleteEntries(req, res) {
   try {
     const { employee, period } = req.query;

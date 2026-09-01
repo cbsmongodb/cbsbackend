@@ -4,6 +4,7 @@ import {
   getDoctorSnapshot,
   submitEntries,
   updateEntryItem,
+  deleteEntryItem,
   deleteEntries,
   getCoefficientOverrides,
   setCoefficientOverride,
@@ -18,6 +19,7 @@ router.get("/", getListing);
 router.get("/snapshot", getDoctorSnapshot);
 router.post("/submit", submitEntries);
 router.put("/:id", updateEntryItem);
+router.delete("/item/:id", deleteEntryItem);
 router.delete("/", deleteEntries);
 
 router.get("/coefficient-overrides", getCoefficientOverrides);
