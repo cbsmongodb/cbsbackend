@@ -21,6 +21,13 @@ const ROLE_NAMES = [
   "Group Manager",
   "System Administrator",
   "Office Manager",
+  "Accounts and Logistics",
+  "Warehouse Manager",
+  "Head Pharmacist",
+  "Finance Manager",
+  "Accountant's assistant",
+  "Aesthetics Team",
+  "Regional Manager",
 ];
 
 function emptyPrivileges() {
