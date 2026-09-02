@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import Employee from "../../models/Employee.js";
 import Role from "../../models/Role.js";
+import Designation from "../../models/Designation.js";
 
 const POPULATE = "role designation group division";
 
@@ -87,9 +88,10 @@ export async function bulkImportEmployees(req, res) {
     }
 
     const roleCache = new Map();
+    const designationCache = new Map();
 
     let created = 0;
-    let skipped = 0;
+    let updated = 0;
     let failed = 0;
     const failedRows = [];
 
@@ -102,30 +104,52 @@ export async function bulkImportEmployees(req, res) {
 
       if (!name || !email) continue;
 
-      const existing = await Employee.findOne({ email });
-      if (existing) {
-        skipped++;
-        continue;
-      }
-
       const nameParts = name.split(/\s+/).filter(Boolean);
       const firstName = nameParts[0] || name;
       const lastName = nameParts.slice(1).join(" ");
 
-      let roleId;
+      let roleId = null;
       const roleKey = designationName.toLowerCase();
       if (roleCache.has(roleKey)) {
         roleId = roleCache.get(roleKey);
       } else {
         const escaped = designationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const role = await Role.findOne({ name: new RegExp(`^${escaped}$`, "i") });
-        if (!role) {
-          failed++;
-          failedRows.push({ name, reason: `No matching role found: "${designationName}"` });
-          continue;
+        if (role) {
+          roleId = role._id;
+          roleCache.set(roleKey, roleId);
         }
-        roleId = role._id;
-        roleCache.set(roleKey, roleId);
+      }
+
+      if (!roleId) {
+        failed++;
+        failedRows.push({ name, reason: `No matching role found: "${designationName}"` });
+        continue;
+      }
+
+      let designationId = null;
+      if (designationCache.has(roleKey)) {
+        designationId = designationCache.get(roleKey);
+      } else {
+        const escaped = designationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const designation = await Designation.findOne({ position: new RegExp(`^${escaped}$`, "i") });
+        if (designation) {
+          designationId = designation._id;
+          designationCache.set(roleKey, designationId);
+        }
+      }
+
+      const existing = await Employee.findOne({ email });
+      if (existing) {
+        existing.firstName = firstName;
+        existing.lastName = lastName;
+        existing.phoneNumber = phoneNumber;
+        existing.role = roleId;
+        if (designationId) existing.designation = designationId;
+        existing.isActive = status === "active";
+        await existing.save();
+        updated++;
+        continue;
       }
 
       const hashed = await bcrypt.hash("123456", 10);
@@ -137,12 +161,13 @@ export async function bulkImportEmployees(req, res) {
         phoneNumber,
         password: hashed,
         role: roleId,
+        designation: designationId,
         isActive: status === "active",
       });
       created++;
     }
 
-    res.json({ created, skipped, failed, failedRows });
+    res.json({ created, updated, failed, failedRows });
   } catch (err) {
     console.error("bulkImportEmployees failed:", err);
     res.status(500).json({ error: "Server error" });
