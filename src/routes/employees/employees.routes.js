@@ -5,6 +5,7 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
+  bulkImportEmployees,
 } from "./employees.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -13,6 +14,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get("/", getAllEmployees);
+router.post("/bulk-import", bulkImportEmployees);
 router.get("/:id", getEmployee);
 router.post("/", createEmployee);
 router.put("/:id", updateEmployee);
