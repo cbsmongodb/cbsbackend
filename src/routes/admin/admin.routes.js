@@ -26,7 +26,7 @@ function makeRouter(Model, populate = "") {
 export const roleRoutes = makeRouter(Role);
 export const designationRoutes = makeRouter(Designation);
 export const groupRoutes = makeRouter(Group, "region section head");
-export const regionRoutes = makeRouter(Region);
+export const regionRoutes = makeRouter(Region, "parent");
 
 export const sectionRoutes = makeRouter(Section, "region head");
 
