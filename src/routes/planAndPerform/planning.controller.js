@@ -20,7 +20,24 @@ export async function getAllPlannings(req, res) {
     }
 
     const plans = await PlanConfiguration.find(filter).populate(POPULATE).sort({ period: -1 });
-    res.json(plans);
+
+    const planIds = plans.map((p) => p._id);
+    const pcds = await PlanConfigurationDoctor.find({ planConfiguration: { $in: planIds } }).populate(
+      "doctor"
+    );
+    const doctorsByPlan = new Map();
+    pcds.forEach((pcd) => {
+      const key = String(pcd.planConfiguration);
+      if (!doctorsByPlan.has(key)) doctorsByPlan.set(key, []);
+      if (pcd.doctor) doctorsByPlan.get(key).push(pcd.doctor);
+    });
+
+    const withDoctors = plans.map((plan) => ({
+      ...plan.toObject(),
+      doctors: doctorsByPlan.get(String(plan._id)) || [],
+    }));
+
+    res.json(withDoctors);
   } catch (err) {
     console.error("getAllPlannings failed:", err);
     res.status(500).json({ error: "Server error" });
