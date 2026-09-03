@@ -400,3 +400,47 @@ export async function getEfficiencyReport(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+export async function getReimbursementReport(req, res) {
+  try {
+    const { from, to, employee } = req.query;
+
+    const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
+    if (from || to) {
+      filter.period = {};
+      if (from) filter.period.$gte = new Date(from);
+      if (to) filter.period.$lte = new Date(to);
+    }
+    if (employee) filter.performer = employee;
+
+    const plans = await PlanConfiguration.find(filter)
+      .populate("performer", "firstName lastName")
+      .populate({ path: "hospital", populate: "region" })
+      .sort({ iWentAt: 1 });
+
+    // one row per employee per day — first hospital visit of that day wins
+    const seen = new Map();
+    plans.forEach((plan) => {
+      if (!plan.hospital?.region) return;
+      const dateKey = new Date(plan.period).toISOString().slice(0, 10);
+      const empId = String(plan.performer?._id || "");
+      const key = `${dateKey}_${empId}`;
+      if (seen.has(key)) return;
+
+      seen.set(key, {
+        date: plan.period,
+        employeeName:
+          plan.performer?.name ||
+          `${plan.performer?.firstName || ""} ${plan.performer?.lastName || ""}`.trim(),
+        regionName: plan.hospital.region.name,
+        amount: plan.hospital.region.reimbursementAmt || 0,
+      });
+    });
+
+    const result = [...seen.values()].sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(result);
+  } catch (err) {
+    console.error("getReimbursementReport failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
