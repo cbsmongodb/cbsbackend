@@ -11,6 +11,7 @@ import {
   checkOut,
   doctorsForPlanHospital,
   getVisitDurations,
+  getEfficiencyReport,
 } from "./planning.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -22,6 +23,7 @@ export default function planningsRoutes(io) {
   router.post("/", createPlanning);
 
   router.get("/visit-durations", getVisitDurations);
+  router.get("/reports/efficiency", getEfficiencyReport);
 
   router.get("/:id", getPlanning);
   router.put("/:id", updatePlanning);

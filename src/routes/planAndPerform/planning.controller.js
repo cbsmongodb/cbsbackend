@@ -1,5 +1,6 @@
 import PlanConfiguration from "../../models/PlanConfiguration.js";
 import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
+import Doctor from "../../models/Doctor.js";
 import Address from "../../models/Address.js";
 import Attendance from "../../models/Attendance.js";
 import Hospital from "../../models/Hospital.js";
@@ -331,6 +332,71 @@ export async function doctorsForPlanHospital(req, res) {
     res.json(doctors);
   } catch (err) {
     console.error("doctorsForPlanHospital failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+export async function getEfficiencyReport(req, res) {
+  try {
+    const { from, to, employee, hospital } = req.query;
+
+    const planFilter = {};
+    if (from || to) {
+      planFilter.period = {};
+      if (from) planFilter.period.$gte = new Date(from);
+      if (to) planFilter.period.$lte = new Date(to);
+    }
+    if (employee) planFilter.performer = employee;
+    if (hospital) planFilter.hospital = hospital;
+
+    const plans = await PlanConfiguration.find(planFilter)
+      .populate("performer", "firstName lastName")
+      .populate("hospital", "name")
+      .populate("pharmacy", "pharmacyName");
+
+    const planIds = plans.map((p) => p._id);
+    const planById = new Map(plans.map((p) => [String(p._id), p]));
+
+    const pcds = await PlanConfigurationDoctor.find({
+      planConfiguration: { $in: planIds },
+    }).populate({ path: "doctor", populate: "profile" });
+
+    const groups = new Map();
+    pcds.forEach((pcd) => {
+      const plan = planById.get(String(pcd.planConfiguration));
+      if (!plan || !pcd.doctor) return;
+
+      const dateKey = new Date(plan.period).toISOString().slice(0, 10);
+      const employeeId = String(plan.performer?._id || "");
+      const placeId = String(plan.hospital?._id || plan.pharmacy?._id || "");
+      const groupKey = `${dateKey}_${employeeId}_${placeId}`;
+
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          date: plan.period,
+          employeeName:
+            plan.performer?.name ||
+            `${plan.performer?.firstName || ""} ${plan.performer?.lastName || ""}`.trim(),
+          placeName: plan.hospital?.name || plan.pharmacy?.pharmacyName || "უცნობი",
+          doctors: [],
+        });
+      }
+
+      groups.get(groupKey).doctors.push({
+        name:
+          pcd.doctor.name ||
+          `${pcd.doctor.firstName || ""} ${pcd.doctor.lastName || ""}`.trim(),
+        profile: pcd.doctor.profile?.name || null,
+      });
+    });
+
+    const result = [...groups.values()]
+      .map((g) => ({ ...g, visitCount: g.doctors.length }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.json(result);
+  } catch (err) {
+    console.error("getEfficiencyReport failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
