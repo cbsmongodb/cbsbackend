@@ -2,6 +2,8 @@ import PlanConfiguration from "../../models/PlanConfiguration.js";
 import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import Attendance from "../../models/Attendance.js";
 import Address from "../../models/Address.js";
+import { sendAsExcel } from "../../utils/excel.js";
+import { getReimbursementOrderIndex } from "../../utils/reimbursementOrder.js";
 
 export async function getEfficiencyReport(req, res) {
   try {
@@ -85,7 +87,6 @@ export async function getReimbursementReport(req, res) {
       .populate({ path: "hospital", populate: "region" })
       .sort({ iWentAt: 1 });
 
-    // one row per employee per day — first hospital visit of that day wins
     const seen = new Map();
     plans.forEach((plan) => {
       if (!plan.hospital?.region) return;
@@ -112,6 +113,78 @@ export async function getReimbursementReport(req, res) {
   }
 }
 
+export async function exportReimbursementReport(req, res) {
+  try {
+    const { from, to, employee } = req.query;
+
+    const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
+    if (from || to) {
+      filter.period = {};
+      if (from) filter.period.$gte = new Date(from);
+      if (to) filter.period.$lte = new Date(to);
+    }
+    if (employee) filter.performer = employee;
+
+    const plans = await PlanConfiguration.find(filter)
+      .populate("performer", "firstName lastName")
+      .populate({ path: "hospital", populate: "region" })
+      .sort({ iWentAt: 1 });
+
+    const seen = new Map();
+    plans.forEach((plan) => {
+      if (!plan.hospital?.region) return;
+      const dateKey = new Date(plan.period).toISOString().slice(0, 10);
+      const empId = String(plan.performer?._id || "");
+      const key = `${dateKey}_${empId}`;
+      if (seen.has(key)) return;
+
+      const employeeName =
+        plan.performer?.name ||
+        `${plan.performer?.firstName || ""} ${plan.performer?.lastName || ""}`.trim();
+
+      seen.set(key, {
+        date: plan.period,
+        employeeName,
+        regionName: plan.hospital.region.name,
+        amount: plan.hospital.region.reimbursementAmt || 0,
+      });
+    });
+
+    const rows = [...seen.values()].sort((a, b) => {
+      const orderA = getReimbursementOrderIndex(a.employeeName);
+      const orderB = getReimbursementOrderIndex(b.employeeName);
+      if (orderA !== orderB) return orderA - orderB;
+      if (a.employeeName !== b.employeeName) return a.employeeName.localeCompare(b.employeeName);
+      return new Date(a.date) - new Date(b.date);
+    });
+
+    const total = rows.reduce((sum, r) => sum + r.amount, 0);
+
+    await sendAsExcel(res, {
+      filename: `reimbursement_report_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      columns: [
+        { header: "თანამშრომელი", key: "employeeName", width: 28 },
+        { header: "პერიოდი", key: "dateStr", width: 14 },
+        { header: "რეგიონი", key: "regionName", width: 16 },
+        { header: "ანაზღაურება (₾)", key: "amount", width: 18 },
+      ],
+      rows: [
+        ...rows.map((r) => ({
+          employeeName: r.employeeName,
+          dateStr: new Date(r.date).toLocaleDateString("en-GB"),
+          regionName: r.regionName,
+          amount: r.amount,
+        })),
+        {},
+        { employeeName: "სულ", amount: total },
+      ],
+    });
+  } catch (err) {
+    console.error("exportReimbursementReport failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 export async function getAttendanceReport(req, res) {
   try {
     const filter = {};
@@ -126,8 +199,6 @@ export async function getAttendanceReport(req, res) {
       .populate("employee", "firstName lastName")
       .sort({ attendanceTime: -1 });
 
-    // split by source: standalone (own Address, addressableType "Attendance")
-    // vs via-plan (address lives on the PlanConfiguration instead)
     const standaloneIds = records.filter((r) => !r.viaPlan).map((r) => r._id);
     const planIds = records.filter((r) => r.viaPlan).map((r) => r.viaPlan);
 
