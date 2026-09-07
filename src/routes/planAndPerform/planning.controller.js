@@ -219,7 +219,7 @@ export function checkOut(io) {
         return res.status(400).json({ error: "Only today's plans can be checked out" });
       }
 
-      plan.status = "i_left";
+      plan.status = "completed";
       plan.iLeftAt = new Date();
       await plan.save();
 
