@@ -47,9 +47,9 @@ export async function getAllPlannings(req, res) {
 
 export async function getPlanning(req, res) {
   try {
-    const plan = await PlanConfiguration.findById(req.params.id)
-      .populate(POPULATE)
-      .populate({ path: "doctors", populate: "doctor" });
+        const plan = await PlanConfiguration.findById(req.params.id)
+      .populate(POPULATE);
+
     if (!plan) return res.status(404).json({ error: "Plan not found" });
 
     const doctors = await PlanConfigurationDoctor.find({ planConfiguration: plan._id }).populate(
