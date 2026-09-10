@@ -4,13 +4,38 @@ const POPULATE = "profile doctorCategory hospitals.hospital";
 
 export async function getAllDoctors(req, res) {
   try {
+    const { page, limit, search } = req.query;
+
     // matches the filters shown on the Doctors list: division, group, period
     const filter = {};
-    if (req.query.search) filter.name = new RegExp(req.query.search, "i");
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      filter.$or = [{ firstName: regex }, { lastName: regex }, { uniqueNumber: regex }];
+    }
     // division/group filters plug in here once doctors carry those refs
 
-    const doctors = await Doctor.find(filter).populate(POPULATE).sort({ name: 1 });
-    res.json(doctors);
+    if (!page && !limit) {
+      const doctors = await Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 });
+      return res.json(doctors);
+    }
+
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [docs, total] = await Promise.all([
+      Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum),
+      Doctor.countDocuments(filter),
+    ]);
+
+    res.json({
+      docs,
+      total,
+      page: pageNum,
+      pages: Math.max(Math.ceil(total / limitNum), 1),
+      limit: limitNum,
+    });
   } catch (err) {
     console.error("getAllDoctors failed:", err);
     res.status(500).json({ error: "Server error" });
