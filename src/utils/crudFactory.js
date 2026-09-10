@@ -1,10 +1,40 @@
 import { sendAsExcel } from "./excel.js";
 
-export function getAll(Model, defaultPopulate = "") {
+export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
   return async (req, res) => {
     try {
-      const docs = await Model.find().populate(defaultPopulate).sort({ createdAt: -1 });
-      res.json(docs);
+      const { page, limit, search } = req.query;
+
+      function buildFilter() {
+        if (!search || !search.trim() || searchFields.length === 0) return {};
+        const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(escaped, "i");
+        return { $or: searchFields.map((field) => ({ [field]: regex })) };
+      }
+
+      const filter = buildFilter();
+
+      if (!page && !limit) {
+        const docs = await Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 });
+        return res.json(docs);
+      }
+
+      const pageNum = Math.max(parseInt(page) || 1, 1);
+      const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+      const skip = (pageNum - 1) * limitNum;
+
+      const [docs, total] = await Promise.all([
+        Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+        Model.countDocuments(filter),
+      ]);
+
+      res.json({
+        docs,
+        total,
+        page: pageNum,
+        pages: Math.max(Math.ceil(total / limitNum), 1),
+        limit: limitNum,
+      });
     } catch (err) {
       console.error(`getAll ${Model.modelName} failed:`, err);
       res.status(500).json({ error: "Server error" });
@@ -91,9 +121,9 @@ export function exportExcel(Model, columns, defaultPopulate = "") {
   };
 }
 
-export function crud(Model, defaultPopulate = "") {
+export function crud(Model, defaultPopulate = "", searchFields = ["name"]) {
   return {
-    getAll: getAll(Model, defaultPopulate),
+    getAll: getAll(Model, defaultPopulate, searchFields),
     getOne: getOne(Model, defaultPopulate),
     createOne: createOne(Model),
     updateOne: updateOne(Model),
