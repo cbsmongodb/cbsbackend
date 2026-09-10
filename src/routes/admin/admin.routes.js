@@ -23,7 +23,65 @@ function makeRouter(Model, populate = "") {
   return router;
 }
 
-export const roleRoutes = makeRouter(Role);
+const roleRouter = express.Router();
+roleRouter.use(requireAuth);
+const roleC = crud(Role);
+
+// batch employee-count per role, used on the roles list page
+roleRouter.get("/employee-counts", async (req, res) => {
+  try {
+    const roles = await Role.find().select("_id");
+    const counts = {};
+    await Promise.all(
+      roles.map(async (r) => {
+        counts[r._id] = await Employee.countDocuments({ role: r._id });
+      })
+    );
+    res.json(counts);
+  } catch (err) {
+    console.error("role employee-counts failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+roleRouter.get("/", roleC.getAll);
+roleRouter.post("/", roleC.createOne);
+
+// who currently has this role — must be registered before the generic
+// "/:id" route below, or Express would try to match "employee-list" as an id
+roleRouter.get("/:id/employees", async (req, res) => {
+  try {
+    const employees = await Employee.find({ role: req.params.id })
+      .select("firstName lastName email")
+      .sort({ firstName: 1 });
+    res.json(employees);
+  } catch (err) {
+    console.error("role employees list failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+roleRouter.get("/:id", roleC.getOne);
+roleRouter.put("/:id", roleC.updateOne);
+
+// block deleting a role that still has employees assigned, instead of
+// silently orphaning their role reference
+roleRouter.delete("/:id", async (req, res) => {
+  try {
+    const count = await Employee.countDocuments({ role: req.params.id });
+    if (count > 0) {
+      return res.status(400).json({
+        error: `ამ როლს ჯერ კიდევ ჰყავს ${count} თანამშრომელი — ჯერ გადაიყვანეთ სხვა როლზე, მერე წაშალეთ.`,
+      });
+    }
+    return roleC.deleteOne(req, res);
+  } catch (err) {
+    console.error("role delete guard failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+export const roleRoutes = roleRouter;
 export const designationRoutes = makeRouter(Designation);
 export const groupRoutes = makeRouter(Group, "region section head");
 export const regionRoutes = makeRouter(Region, "parent");
