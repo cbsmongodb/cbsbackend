@@ -7,19 +7,39 @@ const POPULATE = "role designation group division";
 
 export async function getAllEmployees(req, res) {
   try {
+    const { page, limit, division, group, search } = req.query;
+
     // dashboard filters: ?division=&group=&search=
     const filter = {};
-    if (req.query.division) filter.division = req.query.division;
-    if (req.query.group) filter.group = req.query.group;
-    if (req.query.search) {
-      filter.$or = [
-        { firstName: new RegExp(req.query.search, "i") },
-        { lastName: new RegExp(req.query.search, "i") },
-      ];
+    if (division) filter.division = division;
+    if (group) filter.group = group;
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      filter.$or = [{ firstName: regex }, { lastName: regex }];
     }
 
-    const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 });
-    res.json(employees);
+    if (!page && !limit) {
+      const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 });
+      return res.json(employees);
+    }
+
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [docs, total] = await Promise.all([
+      Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum),
+      Employee.countDocuments(filter),
+    ]);
+
+    res.json({
+      docs,
+      total,
+      page: pageNum,
+      pages: Math.max(Math.ceil(total / limitNum), 1),
+      limit: limitNum,
+    });
   } catch (err) {
     console.error("getAllEmployees failed:", err);
     res.status(500).json({ error: "Server error" });
