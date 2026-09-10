@@ -6,7 +6,7 @@ import { requireAuth } from "../../middleware/auth.js";
 const router = express.Router();
 router.use(requireAuth);
 
-const c = crud(Pharmacy, "region");
+const c = crud(Pharmacy, "region", ["pharmacyName"]);
 router.get("/", c.getAll);
 router.post("/", c.createOne);
 router.get("/:id", c.getOne);
