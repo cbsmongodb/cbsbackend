@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import Employee from "../../models/Employee.js";
 import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
+import { getVisibleEmployeeIds } from "../../utils/groupVisibility.js";
 
 const POPULATE = "role designation group division";
 
@@ -17,6 +18,15 @@ export async function getAllEmployees(req, res) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
       filter.$or = [{ firstName: regex }, { lastName: regex }];
+    }
+
+    // group/section-scoped visibility — admins see everyone; a Section head
+    // (Division Manager) sees their section's groups; a Group head sees
+    // their own group; everyone else sees only themselves
+    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    if (!isAdmin) {
+      const visibleIds = await getVisibleEmployeeIds(req.employee);
+      filter._id = { $in: visibleIds };
     }
 
     if (!page && !limit) {
