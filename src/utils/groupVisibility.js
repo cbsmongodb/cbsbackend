@@ -35,3 +35,25 @@ export async function getVisibleEmployeeIds(requester) {
   });
   return Array.from(ids);
 }
+
+// Drug IDs this requester is allowed to see — union of their group(s)'
+// drug lists. Section/Group heads see every drug across their visible
+// groups; a regular member sees just their own group's drugs; someone
+// with no group at all sees none.
+export async function getVisibleDrugIds(requester) {
+  const headGroups = await getVisibleGroups(requester);
+  if (headGroups.length > 0) {
+    const ids = new Set();
+    headGroups.forEach((g) => (g.drugs || []).forEach((d) => ids.add(String(d))));
+    return Array.from(ids);
+  }
+
+  const memberGroups = await Group.find({ members: requester._id });
+  if (memberGroups.length > 0) {
+    const ids = new Set();
+    memberGroups.forEach((g) => (g.drugs || []).forEach((d) => ids.add(String(d))));
+    return Array.from(ids);
+  }
+
+  return [];
+}

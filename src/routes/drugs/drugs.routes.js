@@ -5,13 +5,62 @@ import Manufacturer from "../../models/Manufacturer.js";
 import ProducingCountry from "../../models/ProducingCountry.js";
 import Profile from "../../models/Profile.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
+import { getVisibleDrugIds } from "../../utils/groupVisibility.js";
 import { requireAuth } from "../../middleware/auth.js";
 
 const router = express.Router();
 router.use(requireAuth);
 
 const drugC = crud(Drug, "productType profiles manufacturers");
-router.get("/", drugC.getAll);
+
+// custom getAll (not the generic crudFactory one) — needs group-based
+// visibility scoping that no other crudFactory resource needs
+async function getAllDrugs(req, res) {
+  try {
+    const { page, limit, search } = req.query;
+
+    const filter = {};
+    if (search && search.trim()) {
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.name = new RegExp(escaped, "i");
+    }
+
+    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    if (!isAdmin) {
+      const visibleIds = await getVisibleDrugIds(req.employee);
+      filter._id = { $in: visibleIds };
+    }
+
+    const populate = "productType profiles manufacturers";
+
+    if (!page && !limit) {
+      const docs = await Drug.find(filter).populate(populate).sort({ createdAt: -1 });
+      return res.json(docs);
+    }
+
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [docs, total] = await Promise.all([
+      Drug.find(filter).populate(populate).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Drug.countDocuments(filter),
+    ]);
+
+    res.json({
+      docs,
+      total,
+      page: pageNum,
+      pages: Math.max(Math.ceil(total / limitNum), 1),
+      limit: limitNum,
+    });
+  } catch (err) {
+    console.error("getAllDrugs failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+router.get("/", getAllDrugs);
 router.post("/", drugC.createOne);
 
 router.get(
