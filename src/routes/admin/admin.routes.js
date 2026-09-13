@@ -86,7 +86,7 @@ export const designationRoutes = makeRouter(Designation);
 export const groupRoutes = makeRouter(Group, "region section head");
 export const regionRoutes = makeRouter(Region, "parent");
 
-export const sectionRoutes = makeRouter(Section, "region head");
+export const sectionRoutes = makeRouter(Section, "region head groups");
 
 // bulk import — CSV columns: Section, Region, Employee, Status.
 // Region is found-or-created by name; Employee ("head") is matched by

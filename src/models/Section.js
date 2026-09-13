@@ -7,6 +7,9 @@ const sectionSchema = new mongoose.Schema(
     region: { type: mongoose.Schema.Types.ObjectId, ref: "Region", required: true },
     note: String,
     isActive: { type: Boolean, default: false },
+    // groups belonging to this section — a Division Manager (Section.head)
+    // sees the union of all these groups' members/drugs/heads
+    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
   },
   { timestamps: true }
 );
