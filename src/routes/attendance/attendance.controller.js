@@ -439,9 +439,14 @@ export async function getMyStatus(req, res) {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
+    // only the standalone daily checkin/checkout button's own history —
+    // plan-triggered (hospital visit) attendance records must not affect
+    // what this button shows next (matches the viaPlan:null filter already
+    // used correctly in getLiveFeed/getEmployeeDay)
     const records = await Attendance.find({
       employee: req.employee._id,
       attendanceTime: { $gte: startOfDay },
+      viaPlan: null,
     }).sort({ attendanceTime: -1 });
 
     const latest = records[0];
