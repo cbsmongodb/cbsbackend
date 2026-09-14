@@ -27,6 +27,7 @@ import tasksRoutes from "./routes/planAndPerform/tasks.routes.js";
 import efficiencyRoutes from "./routes/reports/efficiency.routes.js";
 import reimbursementRoutes from "./routes/reports/reimbursement.routes.js";
 import attendancesReportRoutes from "./routes/reports/attendances.routes.js";
+import staffPerformanceRoutes from "./routes/reports/staffPerformance.routes.js";
 import {
   roleRoutes,
   designationRoutes,
@@ -115,6 +116,11 @@ app.use(
     reimbursementRoutes
   );
   app.use("/api/reports/attendances", requirePermission("attendances"), attendancesReportRoutes);
+  app.use(
+    "/api/reports/staff-performance",
+    requirePermission("staff_performance_report"),
+    staffPerformanceRoutes
+  );
 
   app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 

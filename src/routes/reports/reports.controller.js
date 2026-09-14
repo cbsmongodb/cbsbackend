@@ -2,6 +2,11 @@ import PlanConfiguration from "../../models/PlanConfiguration.js";
 import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import Attendance from "../../models/Attendance.js";
 import Address from "../../models/Address.js";
+import Employee from "../../models/Employee.js";
+import Budget from "../../models/Budget.js";
+import Group from "../../models/Group.js";
+import Section from "../../models/Section.js";
+import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import { sendAsExcel } from "../../utils/excel.js";
 import { getReimbursementOrderIndex } from "../../utils/reimbursementOrder.js";
 
@@ -240,6 +245,124 @@ export async function getAttendanceReport(req, res) {
     res.json(rows);
   } catch (err) {
     console.error("getAttendanceReport failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/reports/staff-performance
+// ?section=&group=&employee=&mode=month|range&month=YYYY-MM&from=&to=&page=&limit=
+//
+// Two filter modes:
+//  - "month": exact calendar month selected -> all 6 metrics returned,
+//    since DoctorEntryItem (prescription/target/sales) is only stored at
+//    month granularity, matching a full-month range exactly.
+//  - "range": arbitrary from/to dates -> only the 3 daily-accurate metrics
+//    (visits, doctorsVisited, paidAmount) are returned; the DoctorEntryItem
+//    -based columns are omitted entirely rather than shown misleadingly
+//    against a whole month that doesn't match the picked range.
+export async function getStaffPerformanceReport(req, res) {
+  try {
+    const { section, group, employee, mode, month, from, to } = req.query;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
+
+    // 1. resolve which employees are in scope
+    let employeeFilter = { isActive: true };
+    if (employee) {
+      employeeFilter = { _id: employee };
+    } else if (group) {
+      const g = await Group.findById(group).select("members");
+      employeeFilter = { _id: { $in: g?.members || [] } };
+    } else if (section) {
+      const groups = await Group.find({ section }).select("members");
+      const memberIds = groups.flatMap((g) => g.members);
+      employeeFilter = { _id: { $in: memberIds } };
+    }
+
+    const total = await Employee.countDocuments(employeeFilter);
+    const employees = await Employee.find(employeeFilter)
+      .select("firstName lastName")
+      .sort({ firstName: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    // 2. resolve the date range for the daily-accurate metrics, and whether
+    //    the month-only metrics should be computed at all
+    const isMonthMode = mode === "month" && !!month;
+    let rangeStart, rangeEnd, monthStart;
+
+    if (isMonthMode) {
+      const [y, m] = month.split("-").map(Number);
+      monthStart = new Date(Date.UTC(y, m - 1, 1));
+      rangeStart = monthStart;
+      rangeEnd = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
+    } else {
+      rangeStart = from ? new Date(from) : new Date(new Date().setDate(1));
+      rangeEnd = to ? new Date(to) : new Date();
+      rangeEnd.setHours(23, 59, 59, 999);
+    }
+
+    // 3. per-employee computation
+    const rows = await Promise.all(
+      employees.map(async (emp) => {
+        const planFilter = {
+          performer: emp._id,
+          period: { $gte: rangeStart, $lte: rangeEnd },
+          status: "completed",
+        };
+        const planIds = await PlanConfiguration.find(planFilter).distinct("_id");
+        const visits = planIds.length;
+        const doctorsVisited = await PlanConfigurationDoctor.countDocuments({
+          planConfiguration: { $in: planIds },
+        });
+
+        const paidAgg = await Budget.aggregate([
+          { $match: { employee: emp._id, date: { $gte: rangeStart, $lte: rangeEnd } } },
+          { $group: { _id: null, sum: { $sum: "$paidAmount" } } },
+        ]);
+        const totalPaidAmount = Math.round((paidAgg[0]?.sum || 0) * 100) / 100;
+
+        const row = {
+          employeeId: emp._id,
+          employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+          visits,
+          doctorsVisited,
+          totalPaidAmount,
+        };
+
+        if (isMonthMode) {
+          const items = await DoctorEntryItem.find({ employee: emp._id, period: monthStart }).populate(
+            "drug",
+            "price"
+          );
+          let prescriptionAmount = 0;
+          let targetAmount = 0;
+          let salesAmount = 0;
+          items.forEach((it) => {
+            const price = it.drug?.price || 0;
+            prescriptionAmount += (it.prescription || 0) * price;
+            targetAmount += (it.quota || 0) * price;
+            salesAmount += (it.sale || 0) * price;
+          });
+          row.totalPrescriptionAmount = Math.round(prescriptionAmount * 100) / 100;
+          row.targetAmount = Math.round(targetAmount * 100) / 100;
+          row.salesAmount = Math.round(salesAmount * 100) / 100;
+        }
+
+        return row;
+      })
+    );
+
+    res.json({
+      docs: rows,
+      total,
+      page,
+      pages: Math.max(Math.ceil(total / limit), 1),
+      limit,
+      mode: isMonthMode ? "month" : "range",
+    });
+  } catch (err) {
+    console.error("getStaffPerformanceReport failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
