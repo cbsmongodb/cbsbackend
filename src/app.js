@@ -29,6 +29,7 @@ import reimbursementRoutes from "./routes/reports/reimbursement.routes.js";
 import attendancesReportRoutes from "./routes/reports/attendances.routes.js";
 import staffPerformanceRoutes from "./routes/reports/staffPerformance.routes.js";
 import prescriptionsRoutes from "./routes/prescriptions/prescriptions.routes.js";
+import employeeTargetsRoutes from "./routes/employeeTargets/employeeTargets.routes.js";
 import {
   roleRoutes,
   designationRoutes,
@@ -123,6 +124,7 @@ app.use(
     staffPerformanceRoutes
   );
   app.use("/api/prescriptions", requirePermission("prescriptions"), prescriptionsRoutes);
+  app.use("/api/employee-targets", requirePermission("employee_targets"), employeeTargetsRoutes);
 
   app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 
