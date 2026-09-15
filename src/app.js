@@ -36,6 +36,7 @@ import doctorTargetsRoutes from "./routes/doctorTargets/doctorTargets.routes.js"
 import employeeAccountsRoutes from "./routes/employeeAccounts/employeeAccounts.routes.js";
 import analyticsRoutes from "./routes/analytics/analytics.routes.js";
 import budgetsListRoutes from "./routes/budgetsList/budgetsList.routes.js";
+import employeeThemeRoutes from "./routes/employeeTheme/employeeTheme.routes.js";
 import {
   roleRoutes,
   designationRoutes,
@@ -137,6 +138,7 @@ app.use(
   app.use("/api/employee-accounts", requirePermission("employee_accounts"), employeeAccountsRoutes);
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);
   app.use("/api/budgets-list", requirePermission("budgets"), budgetsListRoutes);
+  app.use("/api/employees/me/theme", employeeThemeRoutes);
 
   app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 
