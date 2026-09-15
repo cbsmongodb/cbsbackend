@@ -4,6 +4,19 @@ import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
 import { getVisibleEmployeeIds } from "../../utils/groupVisibility.js";
 
+// optional ObjectId-ref fields (group, division) arrive as "" from an
+// unselected <select> — Mongoose can't cast an empty string to ObjectId,
+// which threw an uncaught CastError and surfaced as a generic 500.
+// Convert "" to null so leaving them unselected actually works.
+const NULLABLE_REF_FIELDS = ["group", "division"];
+function sanitizeRefFields(body) {
+  const clean = { ...body };
+  NULLABLE_REF_FIELDS.forEach((key) => {
+    if (clean[key] === "") clean[key] = null;
+  });
+  return clean;
+}
+
 const POPULATE = "role designation group division";
 
 export async function getAllEmployees(req, res) {
@@ -70,7 +83,7 @@ export async function getEmployee(req, res) {
 // admin-only — this is how employees get an account (no self sign-up)
 export async function createEmployee(req, res) {
   try {
-    const { password, ...rest } = req.body;
+    const { password, ...rest } = sanitizeRefFields(req.body);
     if (!password) return res.status(400).json({ error: "Password is required" });
 
     const hashed = await bcrypt.hash(password, 10);
@@ -93,7 +106,7 @@ export async function createEmployee(req, res) {
 
 export async function updateEmployee(req, res) {
   try {
-    const { password, ...rest } = req.body;
+    const { password, ...rest } = sanitizeRefFields(req.body);
     const update = { ...rest };
     if (password) update.password = await bcrypt.hash(password, 10);
 
