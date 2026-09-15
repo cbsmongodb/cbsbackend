@@ -79,6 +79,7 @@ app.use(
 
   app.use("/api/auth", authRoutes);
 
+  app.use("/api/employees/me/theme", employeeThemeRoutes);
   app.use("/api/employees", requirePermission("employees"), employeesRoutes);
   app.use("/api/admin/roles", requirePermission("roles"), roleRoutes);
   app.use("/api/admin/designations", requirePermission("designations"), designationRoutes);
@@ -138,7 +139,6 @@ app.use(
   app.use("/api/employee-accounts", requirePermission("employee_accounts"), employeeAccountsRoutes);
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);
   app.use("/api/budgets-list", requirePermission("budgets"), budgetsListRoutes);
-  app.use("/api/employees/me/theme", employeeThemeRoutes);
 
   app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 
