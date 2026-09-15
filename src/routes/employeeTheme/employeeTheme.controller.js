@@ -1,3 +1,4 @@
+import Employee from "../../models/Employee.js";
 import Section from "../../models/Section.js";
 import Group from "../../models/Group.js";
 
@@ -23,7 +24,9 @@ const WAREHOUSE_POSITIONS = ["Warehouse Manager", "Warehouse Head"];
 // division-level staff) which Section their group belongs to
 export async function getMyTheme(req, res) {
   try {
-    const employee = req.employee;
+    // requireAuth only populates .role on req.employee, not .designation —
+    // fetch it fresh here so position is actually available
+    const employee = await Employee.findById(req.employee._id).populate("designation", "position");
     const position = employee.designation?.position || null;
 
     let scheme = "office";
