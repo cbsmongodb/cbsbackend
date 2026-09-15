@@ -29,7 +29,16 @@ export default function attendanceRoutes(io) {
   router.get("/current-locations", requirePermission("attendances"), getCurrentLocations);
   router.get("/live-feed", requirePermission("attendances"), getLiveFeed);
   router.get("/daily-status", requirePermission("attendances"), getDailyStatus);
-  router.get("/employee-day", requirePermission("attendances"), getEmployeeDay);
+  // employee-day is used both by admins/managers checking on OTHERS, and by
+  // the Dashboard widget for an employee checking their OWN day — self-access
+  // should never require the "attendances" permission, only viewing others does
+  function selfOrAttendancesPermission(req, res, next) {
+    if (req.query.employeeId && String(req.query.employeeId) === String(req.employee._id)) {
+      return next();
+    }
+    return requirePermission("attendances")(req, res, next);
+  }
+  router.get("/employee-day", selfOrAttendancesPermission, getEmployeeDay);
 
   return router;
 }
