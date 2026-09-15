@@ -28,7 +28,12 @@ export async function login(req, res) {
     }
 
     const token = signToken(employee);
-    const { password: _pw, ...safeEmployee } = employee.toObject();
+    // flattenMaps is required — without it, role.privileges (a Mongoose
+    // Map) survives toObject() as an actual Map instance, which
+    // JSON.stringify then silently serializes as {} (empty object).
+    // This was why every non-admin role's Sidebar/permissions looked
+    // completely empty regardless of what was saved on the Roles page.
+    const { password: _pw, ...safeEmployee } = employee.toObject({ flattenMaps: true });
 
     res.json({ token, employee: safeEmployee });
   } catch (err) {
