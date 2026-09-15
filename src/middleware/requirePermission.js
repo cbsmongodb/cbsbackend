@@ -43,3 +43,17 @@ export function requirePermission(resourceKey) {
     }
   };
 }
+
+// same permission check, but GET (read) requests are always allowed for
+// any authenticated employee — used for resources where the underlying
+// list is needed by many unrelated features as a name-picker/dropdown
+// (e.g. "შემსრულებელი" in the Plannings form), while the resource's own
+// admin PAGE stays gated normally via requirePermission on the frontend
+// and via this same check for write actions
+export function requirePermissionExceptRead(resourceKey) {
+  const gated = requirePermission(resourceKey);
+  return (req, res, next) => {
+    if (req.method === "GET") return next();
+    return gated(req, res, next);
+  };
+}

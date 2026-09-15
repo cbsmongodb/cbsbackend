@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 
-import { requirePermission } from "./middleware/requirePermission.js";
+import { requirePermission, requirePermissionExceptRead } from "./middleware/requirePermission.js";
 
 import authRoutes from "./routes/auth/auth.routes.js";
 import employeesRoutes from "./routes/employees/employees.routes.js";
@@ -80,7 +80,7 @@ app.use(
   app.use("/api/auth", authRoutes);
 
   app.use("/api/employees/me/theme", employeeThemeRoutes);
-  app.use("/api/employees", requirePermission("employees"), employeesRoutes);
+  app.use("/api/employees", requirePermissionExceptRead("employees"), employeesRoutes);
   app.use("/api/admin/roles", requirePermission("roles"), roleRoutes);
   app.use("/api/admin/designations", requirePermission("designations"), designationRoutes);
   app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
