@@ -38,7 +38,6 @@ import analyticsRoutes from "./routes/analytics/analytics.routes.js";
 import budgetsListRoutes from "./routes/budgetsList/budgetsList.routes.js";
 import employeeThemeRoutes from "./routes/employeeTheme/employeeTheme.routes.js";
 import directorDashboardRoutes from "./routes/directorDashboard/directorDashboard.routes.js";
-import directorDashboardRoutes from "./routes/directorDashboard/directorDashboard.routes.js";
 import {
   roleRoutes,
   designationRoutes,
@@ -82,7 +81,6 @@ app.use(
   app.use("/api/auth", authRoutes);
 
   app.use("/api/employees/me/theme", employeeThemeRoutes);
-  app.use("/api/director-dashboard", requirePermission("director_dashboard"), directorDashboardRoutes);
   app.use("/api/director-dashboard", requirePermission("director_dashboard"), directorDashboardRoutes);
   app.use("/api/employees", requirePermissionExceptRead("employees"), employeesRoutes);
   app.use("/api/admin/roles", requirePermission("roles"), roleRoutes);
