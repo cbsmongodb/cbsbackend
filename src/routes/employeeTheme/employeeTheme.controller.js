@@ -33,7 +33,12 @@ export async function getMyTheme(req, res) {
     let label = position || "თანამშრომელი";
     let divisionNumber = null;
 
-    if (position === "Admin") {
+    // hardcoded for this specific account — same physical person does both
+    // Office Manager duties and development on this system
+    if (employee.email?.toLowerCase() === "lbogveradze12@gmail.com") {
+      scheme = "gold";
+      label = "Office Manager | Developer";
+    } else if (position === "Admin") {
       scheme = "gold";
       label = "Developer";
     } else if (position === "Director") {
