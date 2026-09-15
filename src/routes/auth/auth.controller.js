@@ -16,7 +16,8 @@ export async function login(req, res) {
 
     const employee = await Employee.findOne({ email: email.toLowerCase() })
       .select("+password")
-      .populate("role");
+      .populate("role")
+      .populate("designation");
 
           if (!employee || !employee.isActive) {
       return res.status(401).json({ error: "Invalid credentials" });
