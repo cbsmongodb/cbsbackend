@@ -23,7 +23,14 @@ export function requirePermission(resourceKey) {
         return next();
       }
 
-      const resourceAccess = employee.role?.privileges?.[resourceKey];
+      // privileges is a Mongoose Map — bracket access (privileges[key])
+      // silently returns undefined on a Map instance, it needs .get(key).
+      // This was the root cause of every non-admin role always getting 403
+      // no matter what was checked/saved on the Roles page.
+      const privileges = employee.role?.privileges;
+      const resourceAccess = privileges instanceof Map
+        ? privileges.get(resourceKey)
+        : privileges?.[resourceKey];
 
       if (!resourceAccess || resourceAccess[action] !== 1) {
         return res.status(403).json({ error: "Forbidden" });
