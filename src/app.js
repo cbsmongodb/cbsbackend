@@ -140,7 +140,7 @@ app.use(
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);
   app.use("/api/budgets-list", requirePermission("budgets"), budgetsListRoutes);
 
-  app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
+  app.use("/api/leaves", leaveRoutes);
 
   app.use("/api/notifications", notificationsRoutes(io));
 
