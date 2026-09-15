@@ -138,7 +138,7 @@ app.use(
   app.use("/api/doctor-targets", requirePermission("doctor_targets"), doctorTargetsRoutes);
   app.use("/api/employee-accounts", requirePermission("employee_accounts"), employeeAccountsRoutes);
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);
-  app.use("/api/budgets-list", requirePermission("budgets"), budgetsListRoutes);
+  app.use("/api/budgets-list", requirePermission("budgets_report"), budgetsListRoutes);
 
   app.use("/api/leaves", leaveRoutes);
 
