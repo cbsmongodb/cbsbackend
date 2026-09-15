@@ -17,6 +17,41 @@ function getDivisionNumber(name) {
   return null;
 }
 
+async function resolveSectionName(employee) {
+  // 1. employee is the head of a Section directly
+  const headedSection = await Section.findOne({ head: employee._id }).select("name");
+  if (headedSection) return headedSection.name;
+
+  // 2. figure out which group is relevant: one they head, or one they're a member of
+  let groupId = null;
+
+  const headedGroup = await Group.findOne({ head: employee._id }).select("_id section");
+  if (headedGroup) {
+    groupId = headedGroup._id;
+    if (headedGroup.section) {
+      const sec = await Section.findById(headedGroup.section).select("name");
+      if (sec) return sec.name;
+    }
+  } else if (employee.group) {
+    groupId = employee.group;
+    const memberGroup = await Group.findById(employee.group).select("section");
+    if (memberGroup?.section) {
+      const sec = await Section.findById(memberGroup.section).select("name");
+      if (sec) return sec.name;
+    }
+  }
+
+  // 3. fallback: Group.section wasn't set, but this group might still be
+  // listed in some Section's own "groups" array (the two links aren't
+  // auto-synced with each other)
+  if (groupId) {
+    const containingSection = await Section.findOne({ groups: groupId }).select("name");
+    if (containingSection) return containingSection.name;
+  }
+
+  return null;
+}
+
 const WAREHOUSE_POSITIONS = ["Warehouse Manager", "Warehouse Head"];
 
 // GET /api/employees/me/theme — resolves this employee's sidebar theme:
@@ -51,25 +86,7 @@ export async function getMyTheme(req, res) {
       scheme = "warehouse";
       label = position;
     } else {
-      // resolve division via: section they head -> group they head's section
-      // -> group they belong to's section
-      let sectionName = null;
-
-      const headedSection = await Section.findOne({ head: employee._id }).select("name");
-      if (headedSection) {
-        sectionName = headedSection.name;
-      } else {
-        const headedGroup = await Group.findOne({ head: employee._id }).populate("section", "name");
-        if (headedGroup?.section) {
-          sectionName = headedGroup.section.name;
-        } else if (employee.group) {
-          const memberGroup = await Group.findById(employee.group).populate("section", "name");
-          if (memberGroup?.section) {
-            sectionName = memberGroup.section.name;
-          }
-        }
-      }
-
+      const sectionName = await resolveSectionName(employee);
       divisionNumber = getDivisionNumber(sectionName);
       if (divisionNumber) {
         scheme = `division${divisionNumber}`;
