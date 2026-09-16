@@ -62,25 +62,19 @@ export async function getProductSale(req, res) {
 // GET /api/director-dashboard/stock-availability?page=&limit=
 export async function getStockAvailability(req, res) {
   try {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
-
+    // small enough dataset (a few hundred drugs) to return in full and let
+    // the table handle sort/search/pagination client-side — snappier UX
     const [allDrugs, lowStock, expired] = await Promise.all([
       Drug.find({ isActive: true }).select("name stocks").sort({ name: 1 }),
       Drug.checkLowStock(),
       Drug.checkExpiredDrugs(),
     ]);
 
-    const total = allDrugs.length;
-    const start = (page - 1) * limit;
-    const docs = allDrugs.slice(start, start + limit).map((d) => ({ name: d.name, stocks: d.stocks }));
+    const docs = allDrugs.map((d) => ({ name: d.name, stocks: d.stocks }));
 
     res.json({
       docs,
-      total,
-      page,
-      pages: Math.max(Math.ceil(total / limit), 1),
-      limit,
+      total: docs.length,
       lowStock,
       expired,
     });
