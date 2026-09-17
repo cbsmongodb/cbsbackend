@@ -123,3 +123,138 @@ export async function deletePrescription(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+// POST /api/prescriptions
+export async function createPrescription(req, res) {
+  try {
+    const { doctor, employee, date, note, isActive } = req.body;
+    if (!doctor || !employee) {
+      return res.status(400).json({ error: "Doctor and employee are required" });
+    }
+    const prescription = await Prescription.create({
+      doctor,
+      employee,
+      date: date || new Date(),
+      note: note || "",
+      isActive: isActive !== undefined ? isActive : true,
+    });
+    res.status(201).json(prescription);
+  } catch (err) {
+    console.error("createPrescription failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/prescriptions/:id — full detail for the edit form: the
+// prescription itself + its drug lines (with sale boxes) + the active
+// drug list for the "add medicine" dropdown
+export async function getPrescriptionById(req, res) {
+  try {
+    const prescription = await Prescription.findById(req.params.id)
+      .populate("doctor", "firstName lastName uniqueNumber")
+      .populate("employee", "firstName lastName");
+    if (!prescription) return res.status(404).json({ error: "Not found" });
+
+    const [drugPrescriptions, activeDrugs] = await Promise.all([
+      DrugPrescription.find({ prescription: prescription._id }).populate("drug", "name"),
+      Drug.find({ isActive: true }).select("name").sort({ name: 1 }),
+    ]);
+
+    res.json({
+      _id: prescription._id,
+      date: prescription.date,
+      note: prescription.note,
+      isActive: prescription.isActive,
+      doctor: prescription.doctor
+        ? { _id: prescription.doctor._id, name: prescription.doctor.name, uniqueNumber: prescription.doctor.uniqueNumber }
+        : null,
+      employee: prescription.employee
+        ? { _id: prescription.employee._id, name: prescription.employee.name }
+        : null,
+      drugLines: drugPrescriptions.map((dp) => ({
+        _id: dp._id,
+        drugId: dp.drug?._id,
+        drugName: dp.drug?.name || "—",
+        totalNoOfBoxes: dp.totalNoOfBoxes || 0,
+        saleBoxes: dp.saleBoxes || 0,
+      })),
+      activeDrugs: activeDrugs.map((d) => ({ _id: d._id, name: d.name })),
+    });
+  } catch (err) {
+    console.error("getPrescriptionById failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// POST /api/prescriptions/:id/drugs
+// body: either { drugId, totalNoOfBoxes } for one line, or
+// { items: [{ drugId, totalNoOfBoxes }, ...] } for "Add Multiple Medicines" —
+// find-or-create per drug, matching Rails' add_drug_details behavior
+export async function addDrugDetails(req, res) {
+  try {
+    const prescription = await Prescription.findById(req.params.id);
+    if (!prescription) return res.status(404).json({ error: "Not found" });
+
+    const items = Array.isArray(req.body.items)
+      ? req.body.items
+      : [{ drugId: req.body.drugId, totalNoOfBoxes: req.body.totalNoOfBoxes }];
+
+    for (const item of items) {
+      if (!item.drugId || item.totalNoOfBoxes === undefined || item.totalNoOfBoxes === "") continue;
+      let dp = await DrugPrescription.findOne({ prescription: prescription._id, drug: item.drugId });
+      if (dp) {
+        dp.totalNoOfBoxes = parseInt(item.totalNoOfBoxes, 10) || 0;
+        await dp.save();
+      } else {
+        await DrugPrescription.create({
+          prescription: prescription._id,
+          drug: item.drugId,
+          totalNoOfBoxes: parseInt(item.totalNoOfBoxes, 10) || 0,
+          saleBoxes: 0,
+        });
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("addDrugDetails failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// DELETE /api/prescriptions/:id/drugs/:drugPrescriptionId
+export async function removeDrugPrescription(req, res) {
+  try {
+    const deleted = await DrugPrescription.findOneAndDelete({
+      _id: req.params.drugPrescriptionId,
+      prescription: req.params.id,
+    });
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("removeDrugPrescription failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// PUT /api/drug-prescriptions/:id — updates just the saleBoxes field on one
+// drug line. Validates saleBoxes <= totalNoOfBoxes, matching Rails'
+// DrugPrescriptionsController#update exactly.
+export async function updateDrugPrescriptionSaleBoxes(req, res) {
+  try {
+    const dp = await DrugPrescription.findById(req.params.id);
+    if (!dp) return res.status(404).json({ error: "Not found" });
+
+    const saleBoxes = parseInt(req.body.saleBoxes, 10) || 0;
+    if ((dp.totalNoOfBoxes || 0) < saleBoxes) {
+      return res.status(400).json({ error: "Sale boxes cannot exceed total no of boxes" });
+    }
+
+    dp.saleBoxes = saleBoxes;
+    await dp.save();
+    res.json(dp);
+  } catch (err) {
+    console.error("updateDrugPrescriptionSaleBoxes failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
