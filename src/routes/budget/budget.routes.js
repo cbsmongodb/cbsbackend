@@ -5,6 +5,7 @@ import {
   updateBudget,
   deleteBudget,
   getBudgetAllotment,
+  computeBudgetAmounts,
 } from "./budget.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -12,6 +13,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get("/allotment", getBudgetAllotment);
+router.get("/compute-amounts", computeBudgetAmounts);
 router.get("/", getAllBudgets);
 router.post("/", createBudget);
 router.put("/:id", updateBudget);

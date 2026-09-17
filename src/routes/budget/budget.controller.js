@@ -129,3 +129,85 @@ export async function getBudgetAllotment(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+// GET /api/budgets/compute-amounts?employee=&doctor=&date=
+// Auto-fills the Create Budget form once employee+doctor+date are picked —
+// mirrors Rails' doctor_prescription_amount, reusing the exact same
+// prescription/target formula as the Analytics endpoint.
+export async function computeBudgetAmounts(req, res) {
+  try {
+    const { employee, doctor, date } = req.query;
+    if (!employee || !doctor || !date) {
+      return res.status(400).json({ error: "employee, doctor and date are required" });
+    }
+
+    const d = new Date(date);
+    const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
+    const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const { default: Prescription } = await import("../../models/Prescription.js");
+    const { default: DrugPrescription } = await import("../../models/DrugPrescription.js");
+    const { default: DoctorTarget } = await import("../../models/DoctorTarget.js");
+    const { default: MedicineTarget } = await import("../../models/MedicineTarget.js");
+
+    const prescriptions = await Prescription.find({
+      doctor,
+      employee,
+      date: { $gte: monthStart, $lte: monthEnd },
+    }).select("_id");
+    const prescriptionIds = prescriptions.map((p) => p._id);
+
+    const items = await DrugPrescription.find({
+      prescription: { $in: prescriptionIds },
+    }).populate("drug", "price bonus");
+
+    let prescriptionAmt = 0;
+    let salesAmount = 0;
+    let payableAmt = 0;
+    items.forEach((it) => {
+      const price = it.drug?.price || 0;
+      const bonus = it.drug?.bonus || 0;
+      prescriptionAmt += (it.totalNoOfBoxes || 0) * price;
+      salesAmount += (it.saleBoxes || 0) * price;
+      payableAmt += (it.saleBoxes || 0) * bonus;
+    });
+
+    const doctorTargets = await DoctorTarget.find({
+      doctor,
+      employee,
+      date: { $gte: monthStart, $lte: monthEnd },
+    }).select("_id");
+    const targetRows = await MedicineTarget.find({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: { $in: doctorTargets.map((t) => t._id) },
+    }).populate("drug", "price");
+    let targetAmount = 0;
+    targetRows.forEach((t) => {
+      targetAmount += (t.totalNoOfBoxes || 0) * (t.drug?.price || 0);
+    });
+
+    // "delta" — the advanceAmount carried forward from the most recently
+    // created Budget for this doctor+employee pair within THIS calendar
+    // year (Rails uses the current real year, not the picked date's year)
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const yearEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+    const lastBudget = await Budget.findOne({
+      doctor,
+      employee,
+      date: { $gte: yearStart, $lte: yearEnd },
+    }).sort({ createdAt: -1 });
+    const advanceAmount = lastBudget?.advanceAmount || 0;
+
+    res.json({
+      prescriptionAmt: Math.round(prescriptionAmt * 100) / 100,
+      salesAmount: Math.round(salesAmount * 100) / 100,
+      payableAmt: Math.round(payableAmt * 100) / 100,
+      targetAmount: Math.round(targetAmount * 100) / 100,
+      advanceAmount: Math.round(advanceAmount * 100) / 100,
+    });
+  } catch (err) {
+    console.error("computeBudgetAmounts failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
