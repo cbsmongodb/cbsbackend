@@ -2,6 +2,10 @@ import Budget from "../../models/Budget.js";
 import Employee from "../../models/Employee.js";
 import Group from "../../models/Group.js";
 import Doctor from "../../models/Doctor.js";
+import Prescription from "../../models/Prescription.js";
+import DrugPrescription from "../../models/DrugPrescription.js";
+import DoctorTarget from "../../models/DoctorTarget.js";
+import MedicineTarget from "../../models/MedicineTarget.js";
 
 const POPULATE = "employee doctor region section group";
 
@@ -90,40 +94,97 @@ export async function deleteBudget(req, res) {
 }
 
 // GET /api/budgets/allotment?employee_id=&start_date=&end_date=
-// Rails' budget_allotment — per-doctor paid_amount breakdown for one employee
+// Rails' budget_allotment — full page: 4 summary totals, per-doctor paid
+// chart, and the employee's raw Budget rows for the table. Defaults to
+// last month + the logged-in employee, matching Rails exactly.
 export async function getBudgetAllotment(req, res) {
   try {
-    const { employee_id, start_date, end_date } = req.query;
-    if (!employee_id) return res.status(400).json({ error: "employee_id is required" });
+    const employeeId = req.query.employee_id || String(req.employee._id);
 
-    const filter = { employee: employee_id };
-    if (start_date || end_date) {
-      filter.date = {};
-      if (start_date) filter.date.$gte = new Date(start_date);
-      if (end_date) filter.date.$lte = new Date(end_date);
-    }
+    const now = new Date();
+    const defaultStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const startDate = req.query.start_date ? new Date(req.query.start_date) : defaultStart;
+    const endDate = req.query.end_date ? new Date(req.query.end_date) : defaultEnd;
+    endDate.setHours(23, 59, 59, 999);
 
-    const rows = await Budget.aggregate([
+    const filter = { employee: employeeId, date: { $gte: startDate, $lte: endDate } };
+
+    const [docs, employee] = await Promise.all([
+      Budget.find(filter).populate("doctor", "firstName lastName uniqueNumber").sort({ date: -1 }),
+      Employee.findById(employeeId).select("firstName lastName"),
+    ]);
+
+    const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
+
+    // prescription + sales amounts — computed fresh across every doctor
+    // this employee has prescribed to in the range (not just budgeted ones)
+    const prescriptions = await Prescription.find({
+      employee: employeeId,
+      date: { $gte: startDate, $lte: endDate },
+    }).select("_id");
+    const items = await DrugPrescription.find({
+      prescription: { $in: prescriptions.map((p) => p._id) },
+    }).populate("drug", "price");
+    let totalPrescriptionAmount = 0;
+    let totalSalesAmount = 0;
+    items.forEach((it) => {
+      const price = it.drug?.price || 0;
+      totalPrescriptionAmount += (it.totalNoOfBoxes || 0) * price;
+      totalSalesAmount += (it.saleBoxes || 0) * price;
+    });
+
+    // target amount — same approach, across every DoctorTarget this
+    // employee has in the range
+    const doctorTargets = await DoctorTarget.find({
+      employee: employeeId,
+      date: { $gte: startDate, $lte: endDate },
+    }).select("_id");
+    const targetRows = await MedicineTarget.find({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: { $in: doctorTargets.map((t) => t._id) },
+    }).populate("drug", "price");
+    let totalTargetAmount = 0;
+    targetRows.forEach((t) => {
+      totalTargetAmount += (t.totalNoOfBoxes || 0) * (t.drug?.price || 0);
+    });
+
+    const chartData = await Budget.aggregate([
       { $match: filter },
       { $group: { _id: "$doctor", paidAmount: { $sum: "$paidAmount" } } },
-      {
-        $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" },
-      },
+      { $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" } },
       { $unwind: { path: "$doctor", preserveNullAndEmptyArrays: true } },
       {
         $project: {
           name: {
-            $ifNull: [
-              { $concat: ["$doctor.firstName", " ", "$doctor.lastName"] },
-              "Unknown Doctor",
-            ],
+            $ifNull: [{ $concat: ["$doctor.firstName", " ", "$doctor.lastName"] }, "Unknown Doctor"],
           },
           value: { $round: ["$paidAmount", 2] },
         },
       },
     ]);
 
-    res.json({ chartData: rows });
+    res.json({
+      employeeName: employee?.name || "—",
+      totalPaidAmount,
+      totalTargetAmount: Math.round(totalTargetAmount * 100) / 100,
+      totalSalesAmount: Math.round(totalSalesAmount * 100) / 100,
+      totalPrescriptionAmount: Math.round(totalPrescriptionAmount * 100) / 100,
+      chartData,
+      docs: docs.map((d) => ({
+        _id: d._id,
+        date: d.date,
+        doctorName: d.doctor?.name || "—",
+        doctorUniqueNumber: d.doctor?.uniqueNumber || "—",
+        paidAmount: d.paidAmount,
+        advanceAmount: d.advanceAmount,
+        salesAmount: d.salesAmount,
+        deltaAmount: d.advanceAmount,
+        targetAmount: d.targetAmount,
+        prescriptionAmt: d.prescriptionAmt,
+        isActive: d.isActive,
+      })),
+    });
   } catch (err) {
     console.error("getBudgetAllotment failed:", err);
     res.status(500).json({ error: "Server error" });
