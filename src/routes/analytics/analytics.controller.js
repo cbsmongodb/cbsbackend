@@ -34,13 +34,18 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
 
   const items = await DrugPrescription.find({
     prescription: { $in: prescriptionIds },
-  }).populate("drug", "price bonus");
+  }).populate("drug", "name price bonus");
 
   let prescriptionAmount = 0;
   let prescriptionBoxes = 0;
   let salesAmount = 0;
   let saleBoxes = 0;
   let payableAmount = 0;
+
+  // per-drug breakdown, merged across all of this doctor+employee's
+  // prescriptions in the period — matches Rails analytics.xlsx's dynamic
+  // per-product column block (prescription/sales/coefficient/bonus/payable)
+  const byDrug = new Map();
 
   items.forEach((it) => {
     const price = it.drug?.price || 0;
@@ -52,7 +57,33 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
     salesAmount += sold * price;
     saleBoxes += sold;
     payableAmount += sold * bonus;
+
+    const drugName = it.drug?.name || "—";
+    const entry = byDrug.get(drugName) || {
+      drugName,
+      prescriptionAmount: 0,
+      totalBoxes: 0,
+      salesAmount: 0,
+      saleBoxes: 0,
+      bonus,
+      payableAmount: 0,
+    };
+    entry.prescriptionAmount += boxes * price;
+    entry.totalBoxes += boxes;
+    entry.salesAmount += sold * price;
+    entry.saleBoxes += sold;
+    entry.payableAmount += sold * bonus;
+    byDrug.set(drugName, entry);
   });
+
+  const drugBreakdown = Array.from(byDrug.values()).map((d) => ({
+    drugName: d.drugName,
+    prescriptionAmount: Math.round(d.prescriptionAmount * 100) / 100,
+    salesAmount: Math.round(d.salesAmount * 100) / 100,
+    coefficient: d.totalBoxes > 0 ? Math.round((d.saleBoxes / d.totalBoxes) * 10000) / 100 : 0,
+    bonus: d.bonus,
+    payableAmount: Math.round(d.payableAmount * 100) / 100,
+  }));
 
   return {
     prescriptionAmount: Math.round(prescriptionAmount * 100) / 100,
@@ -60,6 +91,7 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
     salesAmount: Math.round(salesAmount * 100) / 100,
     saleBoxes,
     payableAmount: Math.round(payableAmount * 100) / 100,
+    drugBreakdown,
   };
 }
 
