@@ -5,6 +5,7 @@ import {
   deletePrescription,
   createPrescription,
   getPrescriptionById,
+  updatePrescription,
   addDrugDetails,
   removeDrugPrescription,
   updateDrugPrescriptionSaleBoxes,
@@ -17,6 +18,7 @@ router.use(requireAuth);
 router.get("/", getAllPrescriptions);
 router.post("/", createPrescription);
 router.get("/:id", getPrescriptionById);
+router.put("/:id", updatePrescription);
 router.put("/:id/toggle-active", toggleActive);
 router.delete("/:id", deletePrescription);
 

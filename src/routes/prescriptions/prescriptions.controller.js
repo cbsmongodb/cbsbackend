@@ -258,3 +258,22 @@ export async function updateDrugPrescriptionSaleBoxes(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+// PUT /api/prescriptions/:id — update header fields (date, isActive, note)
+export async function updatePrescription(req, res) {
+  try {
+    const prescription = await Prescription.findById(req.params.id);
+    if (!prescription) return res.status(404).json({ error: "Not found" });
+
+    const { date, isActive, note } = req.body;
+    if (date !== undefined) prescription.date = date;
+    if (isActive !== undefined) prescription.isActive = isActive;
+    if (note !== undefined) prescription.note = note;
+    await prescription.save();
+
+    res.json(prescription);
+  } catch (err) {
+    console.error("updatePrescription failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
