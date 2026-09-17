@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./utils/errorLogger.js";
 import http from "http";
 import { Server } from "socket.io";
 import cron from "node-cron";
