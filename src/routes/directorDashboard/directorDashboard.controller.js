@@ -236,6 +236,30 @@ export async function getDoctorsReport(req, res) {
       })
     );
 
+    // total sales grouped by division, for this date range — used for
+    // the "revenue by division" pie chart. Independent of the doctor/
+    // division/group filters above (always shows the full picture).
+    const { default: Division } = await import("../../models/Division.js");
+    const allDivisions = await Division.find();
+    const divisionSummary = await Promise.all(
+      allDivisions.map(async (div) => {
+        const divEmployeeIds = await Employee.find({ division: div._id }).distinct("_id");
+        const divPrescriptions = await Prescription.find({
+          employee: { $in: divEmployeeIds },
+          date: { $gte: fromDate, $lte: toDate },
+        }).select("_id");
+        const divItems = await DrugPrescription.find({
+          prescription: { $in: divPrescriptions.map((p) => p._id) },
+        }).populate("drug", "price");
+        const total = divItems.reduce((s, it) => s + (it.saleBoxes || 0) * (it.drug?.price || 0), 0);
+        return {
+          divisionId: div._id,
+          divisionName: div.name,
+          totalSalesAmount: Math.round(total * 100) / 100,
+        };
+      })
+    );
+
     res.json({
       docs,
       total,
@@ -243,6 +267,7 @@ export async function getDoctorsReport(req, res) {
       pages: Math.max(Math.ceil(total / limitNum), 1),
       limit: limitNum,
       kpis: { newlyAddedCount, activeCount, budgetedCount },
+      divisionSummary,
     });
   } catch (err) {
     console.error("getDoctorsReport failed:", err);
