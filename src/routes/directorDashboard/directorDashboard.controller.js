@@ -240,7 +240,9 @@ export async function getDoctorsReport(req, res) {
     // the "revenue by division" pie chart. Independent of the doctor/
     // division/group filters above (always shows the full picture).
     const { default: Division } = await import("../../models/Division.js");
-    const allDivisions = await Division.find();
+    // only genuine "Division N" entries — some legacy/junk Division rows
+    // (e.g. "Medical SalesPerson") exist in the DB and shouldn't appear here
+    const allDivisions = await Division.find({ name: /division\s*\d/i });
     const divisionSummary = await Promise.all(
       allDivisions.map(async (div) => {
         const divEmployeeIds = await Employee.find({ division: div._id }).distinct("_id");
