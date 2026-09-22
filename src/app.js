@@ -47,11 +47,7 @@ import {
 } from "./routes/admin/admin.routes.js";
 import leaveRoutes from "./routes/leaves/leave.routes.js";
 import notificationsRoutes from "./routes/notifications/notifications.routes.js";
-import {
-  planConfigRoutes,
-  notificationConfigRoutes,
-  batchConfigRoutes,
-} from "./routes/config/config.routes.js";
+import { planConfigRoutes } from "./routes/config/config.routes.js";
 
 export function createApp(io) {
   const app = express();
@@ -144,9 +140,7 @@ app.use(
 
   app.use("/api/notifications", notificationsRoutes(io));
 
-  app.use("/api/config/plan", planConfigRoutes);
-  app.use("/api/config/notifications", notificationConfigRoutes);
-  app.use("/api/config/batch", batchConfigRoutes);
+  app.use("/api/config/plan", requirePermissionExceptRead("plan_config"), planConfigRoutes);
 
   return app;
 }
