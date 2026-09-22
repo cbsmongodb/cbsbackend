@@ -90,7 +90,7 @@ app.use(
   app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
   app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
   app.use("/api/admin/regions", requirePermission("regions"), regionRoutes);
-  app.use("/api/divisions", divisionsRoutes);
+  app.use("/api/divisions", requirePermission("divisions"), divisionsRoutes);
 
   app.use("/api/doctors", requirePermission("doctors"), doctorsRoutes);
   app.use("/api/doctor-categories", requirePermission("doctor_categories"), doctorCategoryRoutes);
@@ -113,10 +113,10 @@ app.use(
   );
 
   app.use("/api/sales-entries", requirePermission("sales"), salesEntriesRoutes);
-  app.use("/api/doctor-entry-items", doctorEntryItemsRoutes);
+  app.use("/api/doctor-entry-items", requirePermission("sales"), doctorEntryItemsRoutes);
   app.use("/api/budgets", requirePermission("budgets"), budgetRoutes);
-  app.use("/api/budget-requireds", budgetRequirdRoutes);
-  app.use("/api/budget-requests", budgetRequestRoutes);
+  app.use("/api/budget-requireds", requirePermission("budget_requests"), budgetRequirdRoutes);
+  app.use("/api/budget-requests", requirePermission("budget_requests"), budgetRequestRoutes);
 
     app.use("/api/attendance", attendanceRoutes(io));
 
@@ -144,7 +144,7 @@ app.use(
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);
   app.use("/api/budgets-list", requirePermission("budgets_report"), budgetsListRoutes);
 
-  app.use("/api/leaves", leaveRoutes);
+  app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
 
   app.use("/api/notifications", notificationsRoutes(io));
 
