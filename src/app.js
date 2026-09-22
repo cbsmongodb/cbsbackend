@@ -96,9 +96,9 @@ app.use(
     requirePermission("doctor_sub_categories"),
     doctorSubcategoryRoutes
   );
-  app.use("/api/hospitals", requirePermission("hospitals"), hospitalsRoutes(io));
-  app.use("/api/pharmacies", requirePermission("pharmacies"), pharmaciesRoutes);
-  app.use("/api/profiles", requirePermission("profiles"), profilesRoutes);
+  app.use("/api/hospitals", requirePermissionExceptRead("hospitals"), hospitalsRoutes(io));
+  app.use("/api/pharmacies", requirePermissionExceptRead("pharmacies"), pharmaciesRoutes);
+  app.use("/api/profiles", requirePermissionExceptRead("profiles"), profilesRoutes);
 
   app.use("/api/drugs", requirePermission("drugs"), drugsRoutes);
   app.use("/api/product-types", requirePermission("product_types"), productTypeRoutes);
