@@ -154,8 +154,9 @@ export async function getDoctorsReport(req, res) {
     // resolve which employees are "in scope" for division/group filters
     let scopedEmployeeIds = null;
     if (group) {
-      const g = await Group.findById(group).select("members");
-      scopedEmployeeIds = g?.members || [];
+      // Group.members[] is basically never populated in real data — the
+      // real membership signal lives on Employee.group. Query it directly.
+      scopedEmployeeIds = await Employee.find({ group }).distinct("_id");
     } else if (division) {
       scopedEmployeeIds = await Employee.find({ division }).distinct("_id");
     }

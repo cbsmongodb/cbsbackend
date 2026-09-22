@@ -271,11 +271,13 @@ export async function getStaffPerformanceReport(req, res) {
     if (employee) {
       employeeFilter = { _id: employee };
     } else if (group) {
-      const g = await Group.findById(group).select("members");
-      employeeFilter = { _id: { $in: g?.members || [] } };
+      // Group.members[] is basically never populated in real data — the
+      // real membership signal lives on Employee.group. Query it directly.
+      const memberIds = await Employee.find({ group }).distinct("_id");
+      employeeFilter = { _id: { $in: memberIds } };
     } else if (section) {
-      const groups = await Group.find({ section }).select("members");
-      const memberIds = groups.flatMap((g) => g.members);
+      const groupIds = await Group.find({ section }).distinct("_id");
+      const memberIds = await Employee.find({ group: { $in: groupIds } }).distinct("_id");
       employeeFilter = { _id: { $in: memberIds } };
     }
 

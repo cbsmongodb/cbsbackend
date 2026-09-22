@@ -10,13 +10,14 @@ import DrugPrescription from "../../models/DrugPrescription.js";
 import Budget from "../../models/Budget.js";
 
 async function resolveEmployeeIdsForScope(sectionId, groupId) {
+  // Group.members[] is basically never populated in real data — the
+  // real membership signal lives on Employee.group. Query it directly.
   if (groupId) {
-    const g = await Group.findById(groupId).select("members");
-    return g?.members || [];
+    return await Employee.find({ group: groupId }).distinct("_id");
   }
   if (sectionId) {
-    const groups = await Group.find({ section: sectionId }).select("members");
-    return groups.flatMap((g) => g.members);
+    const groupIds = await Group.find({ section: sectionId }).distinct("_id");
+    return await Employee.find({ group: { $in: groupIds } }).distinct("_id");
   }
   return null;
 }
