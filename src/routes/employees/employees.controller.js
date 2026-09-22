@@ -2,13 +2,14 @@ import bcrypt from "bcryptjs";
 import Employee from "../../models/Employee.js";
 import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
+import Group from "../../models/Group.js";
 import { getVisibleEmployeeIds } from "../../utils/groupVisibility.js";
 
-// optional ObjectId-ref fields (group, division) arrive as "" from an
+// optional ObjectId-ref fields (group) arrive as "" from an
 // unselected <select> — Mongoose can't cast an empty string to ObjectId,
 // which threw an uncaught CastError and surfaced as a generic 500.
 // Convert "" to null so leaving them unselected actually works.
-const NULLABLE_REF_FIELDS = ["group", "division"];
+const NULLABLE_REF_FIELDS = ["group"];
 function sanitizeRefFields(body) {
   const clean = { ...body };
   NULLABLE_REF_FIELDS.forEach((key) => {
@@ -17,15 +18,21 @@ function sanitizeRefFields(body) {
   return clean;
 }
 
-const POPULATE = "role designation group division";
+const POPULATE = "role designation group";
 
 export async function getAllEmployees(req, res) {
   try {
     const { page, limit, division, group, search } = req.query;
 
-    // dashboard filters: ?division=&group=&search=
+    // dashboard filters: ?division=&group=&search= — "division" here is
+    // really a Section id (Section IS the division; there is no separate
+    // Division model anymore). We resolve it to that section's groups and
+    // filter employees by group membership.
     const filter = {};
-    if (division) filter.division = division;
+    if (division) {
+      const groupIds = await Group.find({ section: division }).distinct("_id");
+      filter.group = { $in: groupIds };
+    }
     if (group) filter.group = group;
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

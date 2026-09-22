@@ -158,7 +158,9 @@ export async function getDoctorsReport(req, res) {
       // real membership signal lives on Employee.group. Query it directly.
       scopedEmployeeIds = await Employee.find({ group }).distinct("_id");
     } else if (division) {
-      scopedEmployeeIds = await Employee.find({ division }).distinct("_id");
+      // "division" here is really a Section id — Section IS the division.
+      const divGroupIds = await Group.find({ section: division }).distinct("_id");
+      scopedEmployeeIds = await Employee.find({ group: { $in: divGroupIds } }).distinct("_id");
     }
 
     // which doctors have a prescription from an in-scope employee this period
@@ -240,13 +242,15 @@ export async function getDoctorsReport(req, res) {
     // total sales grouped by division, for this date range — used for
     // the "revenue by division" pie chart. Independent of the doctor/
     // division/group filters above (always shows the full picture).
-    const { default: Division } = await import("../../models/Division.js");
-    // only genuine "Division N" entries — some legacy/junk Division rows
-    // (e.g. "Medical SalesPerson") exist in the DB and shouldn't appear here
-    const allDivisions = await Division.find({ name: /division\s*\d/i });
+    const { default: Section } = await import("../../models/Section.js");
+    // only genuine "N DIVIZION" sections — excludes "Test Division" and any
+    // other non-numbered section that isn't a real division
+    const allSections = await Section.find({ name: /^\d\s*DIVIZION/i });
     const divisionSummary = await Promise.all(
-      allDivisions.map(async (div) => {
-        const divEmployeeIds = await Employee.find({ division: div._id }).distinct("_id");
+      allSections.map(async (sec) => {
+        const divGroupIds = await Group.find({ section: sec._id }).distinct("_id");
+        const divEmployeeIds = await Employee.find({ group: { $in: divGroupIds } }).distinct("_id");
+        if (sec.head) divEmployeeIds.push(sec.head);
         const divPrescriptions = await Prescription.find({
           employee: { $in: divEmployeeIds },
           date: { $gte: fromDate, $lte: toDate },
@@ -256,8 +260,8 @@ export async function getDoctorsReport(req, res) {
         }).populate("drug", "price");
         const total = divItems.reduce((s, it) => s + (it.saleBoxes || 0) * (it.drug?.price || 0), 0);
         return {
-          divisionId: div._id,
-          divisionName: div.name,
+          divisionId: sec._id,
+          divisionName: sec.name,
           totalSalesAmount: Math.round(total * 100) / 100,
         };
       })

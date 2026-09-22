@@ -31,7 +31,6 @@ import staffPerformanceRoutes from "./routes/reports/staffPerformance.routes.js"
 import prescriptionsRoutes from "./routes/prescriptions/prescriptions.routes.js";
 import employeeTargetsRoutes from "./routes/employeeTargets/employeeTargets.routes.js";
 import employeeSalesRoutes from "./routes/employeeSales/employeeSales.routes.js";
-import doctorSalesRoutes from "./routes/doctorSales/doctorSales.routes.js";
 import doctorTargetsRoutes from "./routes/doctorTargets/doctorTargets.routes.js";
 import employeeAccountsRoutes from "./routes/employeeAccounts/employeeAccounts.routes.js";
 import analyticsRoutes from "./routes/analytics/analytics.routes.js";
@@ -46,7 +45,6 @@ import {
   groupRoutes,
   regionRoutes,
 } from "./routes/admin/admin.routes.js";
-import divisionsRoutes from "./routes/divisions/divisions.routes.js";
 import leaveRoutes from "./routes/leaves/leave.routes.js";
 import notificationsRoutes from "./routes/notifications/notifications.routes.js";
 import {
@@ -90,7 +88,6 @@ app.use(
   app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
   app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
   app.use("/api/admin/regions", requirePermission("regions"), regionRoutes);
-  app.use("/api/divisions", requirePermission("divisions"), divisionsRoutes);
 
   app.use("/api/doctors", requirePermission("doctors"), doctorsRoutes);
   app.use("/api/doctor-categories", requirePermission("doctor_categories"), doctorCategoryRoutes);
@@ -138,7 +135,6 @@ app.use(
   app.use("/api/prescriptions", requirePermission("prescriptions"), prescriptionsRoutes);
   app.use("/api/employee-targets", requirePermission("employee_targets"), employeeTargetsRoutes);
   app.use("/api/employee-sales", requirePermission("employee_sales"), employeeSalesRoutes);
-  app.use("/api/doctor-sales", requirePermission("doctor_sales"), doctorSalesRoutes);
   app.use("/api/doctor-targets", requirePermission("doctor_targets"), doctorTargetsRoutes);
   app.use("/api/employee-accounts", requirePermission("employee_accounts"), employeeAccountsRoutes);
   app.use("/api/analytics", requirePermission("analytics"), analyticsRoutes);

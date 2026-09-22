@@ -21,7 +21,6 @@ const employeeSchema = new mongoose.Schema(
     role: { type: mongoose.Schema.Types.ObjectId, ref: "Role", required: true },
 
     group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", default: null },
-    division: { type: mongoose.Schema.Types.ObjectId, ref: "Division", default: null },
 
     isActive: { type: Boolean, default: false },
   },

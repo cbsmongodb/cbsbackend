@@ -1,5 +1,4 @@
 import Employee from "../../models/Employee.js";
-import Division from "../../models/Division.js";
 import Section from "../../models/Section.js";
 import Group from "../../models/Group.js";
 
@@ -62,9 +61,10 @@ export async function getMyTheme(req, res) {
   try {
     // requireAuth only populates .role on req.employee, not .designation —
     // fetch it fresh here so position is actually available
-    const employee = await Employee.findById(req.employee._id)
-      .populate("designation", "position")
-      .populate("division", "name");
+    const employee = await Employee.findById(req.employee._id).populate(
+      "designation",
+      "position"
+    );
     const position = employee.designation?.position || null;
 
     let scheme = "office";
@@ -89,13 +89,7 @@ export async function getMyTheme(req, res) {
       scheme = "warehouse";
       label = position;
     } else {
-      // the Employee's own "division" dropdown (Division model — "Division
-      // 1/2/3") is the direct, explicit signal; fall back to the
-      // Group/Section chain only if it isn't set
-      let sectionName = employee.division?.name || null;
-      if (!sectionName) {
-        sectionName = await resolveSectionName(employee);
-      }
+      const sectionName = await resolveSectionName(employee);
       divisionNumber = getDivisionNumber(sectionName);
       if (divisionNumber) {
         scheme = `division${divisionNumber}`;
