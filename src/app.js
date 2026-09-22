@@ -89,7 +89,7 @@ app.use(
   app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
   app.use("/api/admin/regions", requirePermission("regions"), regionRoutes);
 
-  app.use("/api/doctors", requirePermission("doctors"), doctorsRoutes);
+  app.use("/api/doctors", requirePermissionExceptRead("doctors"), doctorsRoutes);
   app.use("/api/doctor-categories", requirePermission("doctor_categories"), doctorCategoryRoutes);
   app.use(
     "/api/doctor-subcategories",
