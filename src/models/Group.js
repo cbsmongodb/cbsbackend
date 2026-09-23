@@ -11,6 +11,8 @@ const groupSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: false },
     // Rails used a GroupDrug join table — a plain array is simpler in Mongo
     drugs: [{ type: mongoose.Schema.Types.ObjectId, ref: "Drug" }],
+    // employees who belong to this group
+    members: [{ type: mongoose.Schema.Types.ObjectId, ref: "Employee" }],
   },
   { timestamps: true }
 );
