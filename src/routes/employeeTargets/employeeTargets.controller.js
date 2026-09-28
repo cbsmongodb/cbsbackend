@@ -134,3 +134,70 @@ export async function createEmployeeTarget(req, res) {
     res.status(500).json({ error: err.message || "Server error" });
   }
 }
+
+
+// GET /api/employee-targets/:id — one target with its drug rows (for editing)
+export async function getEmployeeTargetById(req, res) {
+  try {
+    const target = await EmployeeTarget.findById(req.params.id)
+      .populate("employee", "firstName lastName name");
+    if (!target) return res.status(404).json({ error: "Not found" });
+
+    const rows = await MedicineTarget.find({
+      medicineTargatableType: "EmployeeTarget",
+      medicineTargatableId: target._id,
+    }).populate("drug", "name price");
+
+    res.json({
+      _id: target._id,
+      date: target.date,
+      employee: target.employee?._id || target.employee,
+      items: rows.map((r) => ({
+        drug: r.drug?._id || r.drug,
+        drugName: r.drug?.name || "",
+        totalNoOfBoxes: r.totalNoOfBoxes,
+      })),
+    });
+  } catch (err) {
+    console.error("getEmployeeTargetById failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// PUT /api/employee-targets/:id — full update (header + drug rows replaced)
+export async function updateEmployeeTarget(req, res) {
+  try {
+    const { employee, date, items } = req.body;
+    if (!employee || !date) {
+      return res.status(400).json({ error: "employee and date are required" });
+    }
+    const list = Array.isArray(items) ? items.filter((i) => i.drug && Number(i.totalNoOfBoxes) > 0) : [];
+    if (list.length === 0) {
+      return res.status(400).json({ error: "at least one drug with boxes is required" });
+    }
+
+    const target = await EmployeeTarget.findByIdAndUpdate(
+      req.params.id,
+      { employee, date: new Date(date) },
+      { new: true }
+    );
+    if (!target) return res.status(404).json({ error: "Not found" });
+
+    await MedicineTarget.deleteMany({
+      medicineTargatableType: "EmployeeTarget",
+      medicineTargatableId: target._id,
+    });
+    const rows = list.map((i) => ({
+      medicineTargatableType: "EmployeeTarget",
+      medicineTargatableId: target._id,
+      drug: i.drug,
+      totalNoOfBoxes: Number(i.totalNoOfBoxes),
+    }));
+    await MedicineTarget.insertMany(rows);
+
+    res.json({ _id: target._id, ok: true });
+  } catch (err) {
+    console.error("updateEmployeeTarget failed:", err);
+    res.status(500).json({ error: err.message || "Server error" });
+  }
+}
