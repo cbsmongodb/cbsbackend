@@ -1,17 +1,15 @@
 import DrugBonus from "../../models/DrugBonus.js";
 
-// თვის დასაწყისზე ნორმალიზება (2026-08-15 -> 2026-08-01)
 function normalizeToMonthStart(dateLike) {
   const d = new Date(dateLike);
+  if (isNaN(d.getTime())) return null;
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
-// GET /api/drug-bonuses?drug=<id> — ერთი წამლის ყველა თვის ბონუსი
 export async function listByDrug(req, res) {
   try {
     const { drug } = req.query;
     if (!drug) return res.status(400).json({ error: "drug is required" });
-
     const items = await DrugBonus.find({ drug }).sort({ period: 1 });
     res.json(items);
   } catch (err) {
@@ -20,31 +18,39 @@ export async function listByDrug(req, res) {
   }
 }
 
-// POST /api/drug-bonuses — დამატება ან განახლება (upsert) თვეზე
-// body: { drug, period, value }
 export async function upsertBonus(req, res) {
   try {
     const { drug, period, value } = req.body;
-    if (!drug || !period || value === undefined) {
+    if (!drug || period === undefined || value === undefined) {
       return res.status(400).json({ error: "drug, period, and value are required" });
     }
 
     const periodDate = normalizeToMonthStart(period);
+    if (!periodDate) {
+      return res.status(400).json({ error: "invalid period" });
+    }
+
+    const numValue = Number(value);
+    if (isNaN(numValue)) {
+      return res.status(400).json({ error: "value must be a number" });
+    }
+
+    const update = { drug, period: periodDate, value: numValue };
+    if (req.employee?._id) update.setBy = req.employee._id;
 
     const item = await DrugBonus.findOneAndUpdate(
       { drug, period: periodDate },
-      { drug, period: periodDate, value, setBy: req.employee?._id },
+      { $set: update },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
     res.json(item);
   } catch (err) {
     console.error("upsertBonus failed:", err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: err.message || "Server error" });
   }
 }
 
-// DELETE /api/drug-bonuses/:id — ერთი თვის ბონუსის წაშლა
 export async function deleteBonus(req, res) {
   try {
     await DrugBonus.findByIdAndDelete(req.params.id);
