@@ -2,6 +2,8 @@ import DoctorTarget from "../../models/DoctorTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
+import Drug from "../../models/Drug.js";
+import { getVisibleDrugIds } from "../../utils/groupVisibility.js";
 
 // GET /api/doctor-targets?search=&doctor=&employee=&fromDate=&toDate=&page=&limit=
 export async function getAllDoctorTargets(req, res) {
@@ -90,5 +92,53 @@ export async function deleteDoctorTarget(req, res) {
   } catch (err) {
     console.error("deleteDoctorTarget failed:", err);
     res.status(500).json({ error: "Server error" });
+  }
+}
+
+
+// GET /api/doctor-targets/visible-drugs
+export async function getVisibleDrugsForDoctorTarget(req, res) {
+  try {
+    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    let filter = {};
+    if (!isAdmin) {
+      const visibleIds = await getVisibleDrugIds(req.employee);
+      filter._id = { $in: visibleIds };
+    }
+    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 });
+    res.json(drugs);
+  } catch (err) {
+    console.error("getVisibleDrugsForDoctorTarget failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// POST /api/doctor-targets
+// body: { employee, doctor, date, items: [{ drug, totalNoOfBoxes }] }
+export async function createDoctorTarget(req, res) {
+  try {
+    const { employee, doctor, date, items } = req.body;
+    if (!employee || !doctor || !date) {
+      return res.status(400).json({ error: "employee, doctor and date are required" });
+    }
+    const list = Array.isArray(items) ? items.filter((i) => i.drug && Number(i.totalNoOfBoxes) > 0) : [];
+    if (list.length === 0) {
+      return res.status(400).json({ error: "at least one drug with boxes is required" });
+    }
+
+    const target = await DoctorTarget.create({ employee, doctor, date: new Date(date) });
+
+    const rows = list.map((i) => ({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: target._id,
+      drug: i.drug,
+      totalNoOfBoxes: Number(i.totalNoOfBoxes),
+    }));
+    await MedicineTarget.insertMany(rows);
+
+    res.json({ _id: target._id, ok: true });
+  } catch (err) {
+    console.error("createDoctorTarget failed:", err);
+    res.status(500).json({ error: err.message || "Server error" });
   }
 }
