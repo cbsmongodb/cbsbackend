@@ -142,3 +142,73 @@ export async function createDoctorTarget(req, res) {
     res.status(500).json({ error: err.message || "Server error" });
   }
 }
+
+
+// GET /api/doctor-targets/:id — one target with its drug rows (for editing)
+export async function getDoctorTargetById(req, res) {
+  try {
+    const target = await DoctorTarget.findById(req.params.id)
+      .populate("employee", "firstName lastName name")
+      .populate("doctor", "firstName lastName name");
+    if (!target) return res.status(404).json({ error: "Not found" });
+
+    const rows = await MedicineTarget.find({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: target._id,
+    }).populate("drug", "name price");
+
+    res.json({
+      _id: target._id,
+      date: target.date,
+      employee: target.employee?._id || target.employee,
+      doctor: target.doctor?._id || target.doctor,
+      items: rows.map((r) => ({
+        drug: r.drug?._id || r.drug,
+        drugName: r.drug?.name || "",
+        totalNoOfBoxes: r.totalNoOfBoxes,
+      })),
+    });
+  } catch (err) {
+    console.error("getDoctorTargetById failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// PUT /api/doctor-targets/:id — full update (header + drug rows replaced)
+export async function updateDoctorTarget(req, res) {
+  try {
+    const { employee, doctor, date, items } = req.body;
+    if (!employee || !doctor || !date) {
+      return res.status(400).json({ error: "employee, doctor and date are required" });
+    }
+    const list = Array.isArray(items) ? items.filter((i) => i.drug && Number(i.totalNoOfBoxes) > 0) : [];
+    if (list.length === 0) {
+      return res.status(400).json({ error: "at least one drug with boxes is required" });
+    }
+
+    const target = await DoctorTarget.findByIdAndUpdate(
+      req.params.id,
+      { employee, doctor, date: new Date(date) },
+      { new: true }
+    );
+    if (!target) return res.status(404).json({ error: "Not found" });
+
+    // replace drug rows
+    await MedicineTarget.deleteMany({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: target._id,
+    });
+    const rows = list.map((i) => ({
+      medicineTargatableType: "DoctorTarget",
+      medicineTargatableId: target._id,
+      drug: i.drug,
+      totalNoOfBoxes: Number(i.totalNoOfBoxes),
+    }));
+    await MedicineTarget.insertMany(rows);
+
+    res.json({ _id: target._id, ok: true });
+  } catch (err) {
+    console.error("updateDoctorTarget failed:", err);
+    res.status(500).json({ error: err.message || "Server error" });
+  }
+}
