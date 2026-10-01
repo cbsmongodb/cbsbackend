@@ -24,6 +24,16 @@ export async function getEfficiencyReport(req, res) {
     if (employee) planFilter.performer = employee;
     if (hospital) planFilter.hospital = hospital;
 
+    const effScope = await getScopeEmployeeIds(req.employee);
+    if (effScope) {
+      const scopeSet = new Set(effScope.map(String));
+      if (planFilter.performer) {
+        if (!scopeSet.has(String(planFilter.performer))) planFilter.performer = { $in: [] };
+      } else {
+        planFilter.performer = { $in: effScope };
+      }
+    }
+
     const plans = await PlanConfiguration.find(planFilter)
       .populate("performer", "firstName lastName")
       .populate("hospital", "name")
@@ -88,6 +98,19 @@ export async function getReimbursementReport(req, res) {
     }
     if (employee) filter.performer = employee;
 
+    // scope: division/group managers only see their own people
+    {
+      const rScope = await getScopeEmployeeIds(req.employee);
+      if (rScope) {
+        const scopeSet = new Set(rScope.map(String));
+        if (filter.performer) {
+          if (!scopeSet.has(String(filter.performer))) filter.performer = { $in: [] };
+        } else {
+          filter.performer = { $in: rScope };
+        }
+      }
+    }
+
     const plans = await PlanConfiguration.find(filter)
       .populate("performer", "firstName lastName")
       .populate({ path: "hospital", populate: "region" })
@@ -130,6 +153,19 @@ export async function exportReimbursementReport(req, res) {
       if (to) filter.period.$lte = new Date(to);
     }
     if (employee) filter.performer = employee;
+
+    // scope: division/group managers only see their own people
+    {
+      const rScope = await getScopeEmployeeIds(req.employee);
+      if (rScope) {
+        const scopeSet = new Set(rScope.map(String));
+        if (filter.performer) {
+          if (!scopeSet.has(String(filter.performer))) filter.performer = { $in: [] };
+        } else {
+          filter.performer = { $in: rScope };
+        }
+      }
+    }
 
     const plans = await PlanConfiguration.find(filter)
       .populate("performer", "firstName lastName")
@@ -200,6 +236,16 @@ export async function getAttendanceReport(req, res) {
       if (req.query.to) filter.attendanceTime.$lte = new Date(req.query.to);
     }
     if (req.query.employee) filter.employee = req.query.employee;
+
+    const attScope = await getScopeEmployeeIds(req.employee);
+    if (attScope) {
+      const scopeSet = new Set(attScope.map(String));
+      if (filter.employee) {
+        if (!scopeSet.has(String(filter.employee))) filter.employee = { $in: [] };
+      } else {
+        filter.employee = { $in: attScope };
+      }
+    }
 
     const records = await Attendance.find(filter)
       .populate("employee", "firstName lastName")
