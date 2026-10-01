@@ -6,6 +6,7 @@ import Attendance from "../../models/Attendance.js";
 import Hospital from "../../models/Hospital.js";
 import { distanceInMeters } from "../../utils/geo.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 const POPULATE = "employee hospital pharmacy author performer";
 
@@ -18,6 +19,16 @@ export async function getAllPlannings(req, res) {
       filter.period = {};
       if (req.query.period_from) filter.period.$gte = new Date(req.query.period_from);
       if (req.query.period_to) filter.period.$lte = new Date(req.query.period_to);
+    }
+
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds) {
+      const scopeSet = new Set(scopeIds.map(String));
+      if (filter.performer) {
+        if (!scopeSet.has(String(filter.performer))) filter.performer = { $in: [] };
+      } else {
+        filter.performer = { $in: scopeIds };
+      }
     }
 
     const plans = await PlanConfiguration.find(filter).populate(POPULATE).sort({ period: -1 });
