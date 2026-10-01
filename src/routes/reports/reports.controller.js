@@ -9,6 +9,7 @@ import Section from "../../models/Section.js";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import { sendAsExcel } from "../../utils/excel.js";
 import { getReimbursementOrderIndex } from "../../utils/reimbursementOrder.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 export async function getEfficiencyReport(req, res) {
   try {
@@ -279,6 +280,20 @@ export async function getStaffPerformanceReport(req, res) {
       const groupIds = await Group.find({ section }).distinct("_id");
       const memberIds = await Employee.find({ group: { $in: groupIds } }).distinct("_id");
       employeeFilter = { _id: { $in: memberIds } };
+    }
+
+    // enforce the viewer's own scope — a division/group manager only ever
+    // sees their own people. Admin/director/finance get null and skip this.
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds) {
+      const scopeSet = new Set(scopeIds.map(String));
+      if (employeeFilter._id && employeeFilter._id.$in) {
+        employeeFilter._id.$in = employeeFilter._id.$in.filter((id) => scopeSet.has(String(id)));
+      } else if (employeeFilter._id) {
+        if (!scopeSet.has(String(employeeFilter._id))) employeeFilter._id = { $in: [] };
+      } else {
+        employeeFilter._id = { $in: scopeIds };
+      }
     }
 
     const total = await Employee.countDocuments(employeeFilter);

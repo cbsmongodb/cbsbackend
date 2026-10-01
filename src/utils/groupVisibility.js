@@ -21,6 +21,23 @@ export async function getVisibleGroups(requester) {
   return [];
 }
 
+// Role names that bypass scoping entirely — they see everyone's data.
+const GLOBAL_ROLE_PATTERNS = [/admin/, /director/, /finance/, /office.?manager/];
+
+export function seesEverything(requester) {
+  const name = (requester?.role?.name || "").toLowerCase().trim();
+  if (!name) return false;
+  return GLOBAL_ROLE_PATTERNS.some((rx) => rx.test(name));
+}
+
+// Central scoping helper. Returns:
+//   null  -> sees everyone (admin/director/finance/office manager) — do not filter
+//   [ids] -> restrict to exactly these employee IDs (division/group manager)
+export async function getScopeEmployeeIds(requester) {
+  if (seesEverything(requester)) return null;
+  return getVisibleEmployeeIds(requester);
+}
+
 // Employee IDs this requester is allowed to see in employee lists —
 // the union of all their visible groups' members and heads, plus themselves.
 //

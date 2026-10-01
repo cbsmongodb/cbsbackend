@@ -1,6 +1,7 @@
 import express from "express";
 import Hospital from "../../models/Hospital.js";
 import Region from "../../models/Region.js";
+import Doctor from "../../models/Doctor.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { geocodeAddress, searchAddress } from "../../utils/geocode.js";
@@ -149,6 +150,79 @@ export default function hospitalsRoutes(io) {
       res.json({ total, geocoded, failed, failedHospitals });
     } catch (err) {
       console.error("geocode-missing hospitals failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  // --- doctors in a hospital ---
+
+  router.get("/:id/doctors", async (req, res) => {
+    try {
+      const doctors = await Doctor.find({ "hospitals.hospital": req.params.id })
+        .select("firstName lastName uniqueNumber isActive")
+        .sort({ firstName: 1, lastName: 1 });
+      res.json(doctors.map((d) => ({
+        _id: d._id,
+        name: [d.firstName, d.lastName].filter(Boolean).join(" "),
+        uniqueNumber: d.uniqueNumber,
+        isActive: d.isActive,
+      })));
+    } catch (err) {
+      console.error("get hospital doctors failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.get("/:id/available-doctors", async (req, res) => {
+    try {
+      const q = (req.query.q || "").trim();
+      const filter = { "hospitals.hospital": { $ne: req.params.id }, isActive: true };
+      if (q) {
+        const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+        filter.$or = [{ firstName: rx }, { lastName: rx }, { uniqueNumber: rx }];
+      }
+      const doctors = await Doctor.find(filter)
+        .select("firstName lastName uniqueNumber")
+        .sort({ firstName: 1, lastName: 1 })
+        .limit(50);
+      res.json(doctors.map((d) => ({
+        _id: d._id,
+        name: [d.firstName, d.lastName].filter(Boolean).join(" "),
+        uniqueNumber: d.uniqueNumber,
+      })));
+    } catch (err) {
+      console.error("get available doctors failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.post("/:id/doctors", async (req, res) => {
+    try {
+      const { doctorId } = req.body;
+      if (!doctorId) return res.status(400).json({ error: "doctorId is required" });
+      const doctor = await Doctor.findById(doctorId);
+      if (!doctor) return res.status(404).json({ error: "Doctor not found" });
+      const already = doctor.hospitals.some((h) => String(h.hospital) === String(req.params.id));
+      if (!already) {
+        doctor.hospitals.push({ hospital: req.params.id });
+        await doctor.save();
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("add doctor to hospital failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.delete("/:id/doctors/:doctorId", async (req, res) => {
+    try {
+      const doctor = await Doctor.findById(req.params.doctorId);
+      if (!doctor) return res.status(404).json({ error: "Doctor not found" });
+      doctor.hospitals = doctor.hospitals.filter((h) => String(h.hospital) !== String(req.params.id));
+      await doctor.save();
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("remove doctor from hospital failed:", err);
       res.status(500).json({ error: "Server error" });
     }
   });
