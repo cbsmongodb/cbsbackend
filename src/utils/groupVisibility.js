@@ -21,13 +21,18 @@ export async function getVisibleGroups(requester) {
   return [];
 }
 
-// Role names that bypass scoping entirely — they see everyone's data.
-const GLOBAL_ROLE_PATTERNS = [/admin/, /director/, /finance/, /office.?manager/];
+// Exactly these roles see everyone's data (no scoping). Everyone else —
+// including Division Manager and Group Manager — is scoped to their own people.
+const GLOBAL_ROLES = new Set([
+  "director",
+  "system administrator",
+  "finance manager",
+  "office manager",
+]);
 
 export function seesEverything(requester) {
   const name = (requester?.role?.name || "").toLowerCase().trim();
-  if (!name) return false;
-  return GLOBAL_ROLE_PATTERNS.some((rx) => rx.test(name));
+  return GLOBAL_ROLES.has(name);
 }
 
 // Central scoping helper. Returns:
