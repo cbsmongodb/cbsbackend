@@ -1,6 +1,7 @@
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 function normalizeToMonthStart(dateLike) {
   let value = dateLike;
@@ -111,6 +112,11 @@ export async function getListing(req, res) {
     const { employee, period } = req.query;
     if (!employee || !period) {
       return res.status(400).json({ error: "employee and period are required" });
+    }
+
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds && !scopeIds.map(String).includes(String(employee))) {
+      return res.json([]);
     }
 
     const periodDate = normalizeToMonthStart(period);

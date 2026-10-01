@@ -163,6 +163,15 @@ export async function getDoctorsReport(req, res) {
       scopedEmployeeIds = await Employee.find({ group: { $in: divGroupIds } }).distinct("_id");
     }
 
+    const { getScopeEmployeeIds } = await import("../../utils/groupVisibility.js");
+    const viewerScope = await getScopeEmployeeIds(req.employee);
+    if (viewerScope) {
+      const viewerSet = new Set(viewerScope.map(String));
+      scopedEmployeeIds = scopedEmployeeIds
+        ? scopedEmployeeIds.filter((id) => viewerSet.has(String(id)))
+        : viewerScope;
+    }
+
     // which doctors have a prescription from an in-scope employee this period
     let doctorIdFilter = null;
     if (scopedEmployeeIds) {

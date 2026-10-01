@@ -1,4 +1,5 @@
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 // Temporary basic CRUD so the server boots — the real submission flow
 // (coefficient/total_budget calculation, DoctorEntrySummary rollup,
@@ -13,6 +14,16 @@ export async function getAllSalesEntries(req, res) {
     if (req.query.employee) filter.employee = req.query.employee;
     if (req.query.doctor) filter.doctor = req.query.doctor;
     if (req.query.period) filter.period = new Date(req.query.period);
+
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds) {
+      const scopeSet = new Set(scopeIds.map(String));
+      if (filter.employee) {
+        if (!scopeSet.has(String(filter.employee))) filter.employee = { $in: [] };
+      } else {
+        filter.employee = { $in: scopeIds };
+      }
+    }
 
     const entries = await DoctorEntryItem.find(filter).populate(POPULATE).sort({ period: -1 });
     res.json(entries);
