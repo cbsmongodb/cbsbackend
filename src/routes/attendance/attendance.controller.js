@@ -4,6 +4,7 @@ import Employee from "../../models/Employee.js";
 import PlanConfiguration from "../../models/PlanConfiguration.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 import { distanceInMeters } from "../../utils/geo.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 export async function setCurrentLocation(req, res) {
   try {
@@ -135,10 +136,15 @@ export async function getLiveFeed(req, res) {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
-    const plans = await PlanConfiguration.find({
+    const planQuery = {
       period: { $gte: startOfDay },
       status: { $in: ["i_went", "i_left", "completed"] },
-    })
+    };
+
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds) planQuery.performer = { $in: scopeIds };
+
+    const plans = await PlanConfiguration.find(planQuery)
       .populate("performer", "firstName lastName")
       .populate("hospital", "name lat lng address");
 
@@ -180,10 +186,13 @@ export async function getLiveFeed(req, res) {
       };
     });
 
-    const standaloneAttendances = await Attendance.find({
+    const standaloneQuery = {
       attendanceTime: { $gte: startOfDay },
       viaPlan: null,
-    })
+    };
+    if (scopeIds) standaloneQuery.employee = { $in: scopeIds };
+
+    const standaloneAttendances = await Attendance.find(standaloneQuery)
       .populate("employee", "firstName lastName")
       .sort({ attendanceTime: 1 });
 
