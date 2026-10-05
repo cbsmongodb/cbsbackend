@@ -57,3 +57,41 @@ export function requirePermissionExceptRead(resourceKey) {
     return gated(req, res, next);
   };
 }
+
+
+// passes if the employee has the action on ANY of the given resources —
+// used so the role dropdown in the Employee form works for someone who
+// can manage employees but must not open the Roles page itself
+export function requireAnyPermission(resourceKeys) {
+  return async (req, res, next) => {
+    try {
+      const header = req.headers.authorization || "";
+      const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+      if (!token) return res.status(401).json({ error: "Not authenticated" });
+
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      const employee = await Employee.findById(payload.id).populate("role");
+      if (!employee || !employee.isActive) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const action = METHOD_TO_ACTION[req.method] || "read";
+      if (employee.role?.name === "admin") {
+        req.employee = employee;
+        return next();
+      }
+
+      const privileges = employee.role?.privileges;
+      const ok = resourceKeys.some((key) => {
+        const access = privileges instanceof Map ? privileges.get(key) : privileges?.[key];
+        return access && access[action] === 1;
+      });
+      if (!ok) return res.status(403).json({ error: "Forbidden" });
+
+      req.employee = employee;
+      next();
+    } catch (err) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+  };
+}

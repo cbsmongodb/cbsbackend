@@ -7,13 +7,15 @@ import Region from "../../models/Region.js";
 import Employee from "../../models/Employee.js";
 import { crud } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { adminScope, rolesScope } from "../../middleware/managerScope.js";
 
 // each is mounted at its own path in app.js:
 // /api/admin/roles, /api/admin/designations, etc.
 
-function makeRouter(Model, populate = "") {
+function makeRouter(Model, populate = "", scopeKind = null) {
   const router = express.Router();
   router.use(requireAuth);
+  if (scopeKind) router.use(adminScope(scopeKind));
   const c = crud(Model, populate);
   router.get("/", c.getAll);
   router.post("/", c.createOne);
@@ -25,6 +27,7 @@ function makeRouter(Model, populate = "") {
 
 const roleRouter = express.Router();
 roleRouter.use(requireAuth);
+roleRouter.use(rolesScope);
 const roleC = crud(Role);
 
 // batch employee-count per role, used on the roles list page
@@ -83,10 +86,10 @@ roleRouter.delete("/:id", async (req, res) => {
 
 export const roleRoutes = roleRouter;
 export const designationRoutes = makeRouter(Designation);
-export const groupRoutes = makeRouter(Group, "region section head");
-export const regionRoutes = makeRouter(Region, "parent");
+export const groupRoutes = makeRouter(Group, "region section head", "group");
+export const regionRoutes = makeRouter(Region, "parent", "region");
 
-export const sectionRoutes = makeRouter(Section, "region head groups");
+export const sectionRoutes = makeRouter(Section, "region head groups", "section");
 
 // bulk import — CSV columns: Section, Region, Employee, Status.
 // Region is found-or-created by name; Employee ("head") is matched by

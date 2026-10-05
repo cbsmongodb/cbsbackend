@@ -93,6 +93,7 @@ export async function getAllEntries(req, res) {
   try {
     const filter = {};
     if (req.query.employee) filter.employee = req.query.employee;
+    else if (req.scopeEmployeeIds) filter.employee = { $in: req.scopeEmployeeIds };
     if (req.query.type) filter.type = req.query.type;
     if (req.query.from || req.query.to) {
       filter.startDate = {};

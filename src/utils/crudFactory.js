@@ -12,7 +12,7 @@ export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
         return { $or: searchFields.map((field) => ({ [field]: regex })) };
       }
 
-      const filter = buildFilter();
+      const filter = { ...buildFilter(), ...(req.scopeFilter || {}) };
 
       if (!page && !limit) {
         const docs = await Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 });

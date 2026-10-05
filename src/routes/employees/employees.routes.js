@@ -8,10 +8,12 @@ import {
   bulkImportEmployees,
 } from "./employees.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { employeeScope } from "../../middleware/managerScope.js";
 
 const router = express.Router();
 
 router.use(requireAuth);
+router.use(employeeScope);
 
 router.get("/", getAllEmployees);
 router.post("/bulk-import", bulkImportEmployees);

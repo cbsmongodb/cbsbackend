@@ -8,9 +8,26 @@ import Employee from "../models/Employee.js";
 //   - a Group's own head sees just that one Group
 //   - everyone else sees no groups (their own baseline data only)
 export async function getVisibleGroups(requester) {
+  // 1) Section head -> every group of that section (both link directions,
+  //    in case Section.groups[] or Group.section is missing on one side)
   const section = await Section.findOne({ head: requester._id }).populate("groups");
-  if (section && section.groups?.length > 0) {
-    return section.groups;
+  if (section) {
+    const byId = new Map();
+    (section.groups || []).forEach((g) => byId.set(String(g._id), g));
+    const linked = await Group.find({ section: section._id });
+    linked.forEach((g) => byId.set(String(g._id), g));
+    if (byId.size > 0) return Array.from(byId.values());
+  }
+
+  // 2) Division Manager role who isn't set as Section.head -> the whole
+  //    division their own group belongs to
+  const roleName = (requester?.role?.name || "").toLowerCase().trim();
+  if (roleName === "division manager" && requester.group) {
+    const own = await Group.findById(requester.group).select("section");
+    if (own?.section) {
+      const divisionGroups = await Group.find({ section: own.section });
+      if (divisionGroups.length > 0) return divisionGroups;
+    }
   }
 
   const ownGroups = await Group.find({ head: requester._id });

@@ -10,9 +10,11 @@ import {
   deleteRestDay,
 } from "./leave.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { leaveScope } from "../../middleware/managerScope.js";
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(leaveScope);
 
 router.get("/balance", getBalance);
 router.post("/balance", setBalance);

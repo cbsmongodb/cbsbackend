@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 
-import { requirePermission, requirePermissionExceptRead } from "./middleware/requirePermission.js";
+import { requirePermission, requirePermissionExceptRead, requireAnyPermission } from "./middleware/requirePermission.js";
 
 import authRoutes from "./routes/auth/auth.routes.js";
 import employeesRoutes from "./routes/employees/employees.routes.js";
@@ -81,7 +81,16 @@ app.use(
   app.use("/api/dev/errors", devErrorsRoutes);
   app.use("/api/director-dashboard", requirePermission("director_dashboard"), directorDashboardRoutes);
   app.use("/api/employees", requirePermissionExceptRead("employees"), employeesRoutes);
-  app.use("/api/admin/roles", requirePermission("roles"), roleRoutes);
+  // role LIST is also readable with "employees" access (Employee form dropdown);
+  // everything else on roles still needs the "roles" permission
+  app.use(
+    "/api/admin/roles",
+    (req, res, next) =>
+      req.method === "GET" && req.path === "/"
+        ? requireAnyPermission(["roles", "employees"])(req, res, next)
+        : requirePermission("roles")(req, res, next),
+    roleRoutes
+  );
   app.use("/api/admin/designations", requirePermission("designations"), designationRoutes);
   app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
   app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
