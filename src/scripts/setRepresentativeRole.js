@@ -12,10 +12,10 @@ const VIEW = { ...OFF, read: 1 };
 const EDIT = { ...OFF, read: 1, add: 1, update: 1 };
 
 const CHANGES = {
-  // sees everyone, can add + edit, cannot delete
-  doctors: EDIT,
-  hospitals: EDIT,
-  pharmacies: EDIT,
+  // sees everyone, VIEW ONLY (no add / edit / delete) — changed Oct 2026
+  doctors: VIEW,
+  hospitals: VIEW,
+  pharmacies: VIEW,
   // own group's drugs only (backend filters by Employee.group), view only
   drugs: VIEW,
   // reference lists — view only
