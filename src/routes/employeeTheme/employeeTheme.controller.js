@@ -68,7 +68,8 @@ export async function getMyTheme(req, res) {
     const position = employee.designation?.position || null;
 
     let scheme = "office";
-    let label = position || "თანამშრომელი";
+    // no designation -> show the role name (e.g. "Sales Manager")
+    let label = position || req.employee.role?.name || null;
     let divisionNumber = null;
 
     // hardcoded for this specific account — same physical person does both
