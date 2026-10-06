@@ -38,6 +38,7 @@ import budgetsListRoutes from "./routes/budgetsList/budgetsList.routes.js";
 import employeeThemeRoutes from "./routes/employeeTheme/employeeTheme.routes.js";
 import devErrorsRoutes from "./routes/devErrors/devErrors.routes.js";
 import directorDashboardRoutes from "./routes/directorDashboard/directorDashboard.routes.js";
+import stocksRoutes from "./routes/stocks/stocks.routes.js";
 import {
   roleRoutes,
   designationRoutes,
@@ -71,6 +72,9 @@ app.use(
     credentials: true,
   })
 );
+  // stock upload sends the Excel file as base64 -> bigger body limit,
+  // registered first so the default 100kb parser skips these requests
+  app.use("/api/stocks", express.json({ limit: "15mb" }));
   app.use(express.json());
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
@@ -80,6 +84,7 @@ app.use(
   app.use("/api/employees/me/theme", employeeThemeRoutes);
   app.use("/api/dev/errors", devErrorsRoutes);
   app.use("/api/director-dashboard", requirePermission("director_dashboard"), directorDashboardRoutes);
+  app.use("/api/stocks", requirePermission("stock_upload"), stocksRoutes);
   app.use("/api/employees", requirePermissionExceptRead("employees"), employeesRoutes);
   // role LIST is also readable with "employees" access (Employee form dropdown);
   // everything else on roles still needs the "roles" permission
