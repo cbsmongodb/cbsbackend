@@ -7,7 +7,12 @@ import Employee from "../models/Employee.js";
 //   - a Section's head sees every Group listed in that Section's `groups`
 //   - a Group's own head sees just that one Group
 //   - everyone else sees no groups (their own baseline data only)
+// these roles only ever see their OWN data (attendance, reports...), even if
+// they happen to be set as head of a group or section
+const SELF_ONLY_ROLES = new Set(["sales manager"]);
+
 export async function getVisibleGroups(requester) {
+  if (SELF_ONLY_ROLES.has((requester?.role?.name || "").toLowerCase().trim())) return [];
   // 1) Section head -> every group of that section (both link directions,
   //    in case Section.groups[] or Group.section is missing on one side)
   const section = await Section.findOne({ head: requester._id }).populate("groups");
