@@ -87,6 +87,23 @@ export function markAttendance(io) {
         return res.status(400).json({ error: "type must be checkin or checkout" });
       }
 
+      // refuse a second check-in (or a check-out without a check-in) —
+      // happens when two buttons on the page (sidebar + dashboard) are out of sync
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const latest = await Attendance.findOne({
+        employee: req.employee._id,
+        attendanceTime: { $gte: startOfDay },
+        viaPlan: null,
+      }).sort({ attendanceTime: -1 });
+      const expected = latest?.attendanceType === "checkin" ? "checkout" : "checkin";
+      if (type !== expected) {
+        return res.status(409).json({
+          error: type === "checkin" ? "already_checked_in" : "not_checked_in",
+          nextAction: expected,
+        });
+      }
+
       const now = new Date();
       const attendanceStatus = await computeAttendanceStatus(type, now);
 
