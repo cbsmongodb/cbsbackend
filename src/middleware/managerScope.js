@@ -18,6 +18,8 @@ const PROTECTED_ROLES = [
   "finance manager",
   "office manager",
   "division manager",
+  "accountant's assistant",
+  "accountant’s assistant",
 ];
 export const PROTECTED_ROLE_REGEXES = PROTECTED_ROLES.map((n) => new RegExp(`^\\s*${n}\\s*$`, "i"));
 

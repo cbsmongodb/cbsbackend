@@ -45,6 +45,8 @@ const GLOBAL_ROLES = new Set([
   "system administrator",
   "finance manager",
   "office manager",
+  "accountant's assistant",
+  "accountant’s assistant",
 ]);
 
 export function seesEverything(requester) {

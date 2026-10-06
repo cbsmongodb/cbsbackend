@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import Drug from "../../models/Drug.js";
 import DrugStock from "../../models/DrugStock.js";
 import Employee from "../../models/Employee.js";
+import { prepareDrugs, bestMatch } from "../../utils/drugNameMatch.js";
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const NAME_HINT = /name|დასახელ|პროდუქ|product|ნომენკლატ|საქონ|item|წამ|препарат|наимен|товар/i;
@@ -143,11 +144,7 @@ export async function preview(req, res) {
     }
 
     const drugs = await Drug.find({}).select("name stocks").sort({ name: 1 }).lean();
-    const byCompact = new Map(drugs.map((d) => [compact(d.name), d]));
-    const longestFirst = drugs
-      .map((d) => ({ d, w: words(d.name) }))
-      .filter((x) => x.w.length >= 3)
-      .sort((a, b) => b.w.length - a.w.length);
+    const prepared = prepareDrugs(drugs);
 
     const lines = [];
     let skipped = 0;
@@ -159,14 +156,8 @@ export async function preview(req, res) {
       const qty = rawQty === "" || rawQty === null || rawQty === undefined ? 0 : parseQty(rawQty);
       if (!Number.isFinite(qty)) { skipped++; continue; }
 
-      let drug = byCompact.get(compact(fileName));
-      let guessed = false;
-      if (!drug) {
-        // "ACEFLEX_INJ N 1" in the file -> "Aceflex" in the system
-        const w = words(fileName);
-        drug = longestFirst.find((x) => w.startsWith(x.w + " "))?.d;
-        guessed = !!drug;
-      }
+      // exact (ignoring spaces/punctuation) or fuzzy — see utils/drugNameMatch.js
+      const { drug, guessed } = bestMatch(fileName, prepared);
       lines.push({ fileName, qty, drug: drug ? String(drug._id) : null, guessed });
     }
 

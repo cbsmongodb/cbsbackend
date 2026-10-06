@@ -139,7 +139,7 @@ app.use(
     requirePermission("reimbursement_report"),
     reimbursementRoutes
   );
-  app.use("/api/reports/attendances", requirePermission("attendances"), attendancesReportRoutes);
+  app.use("/api/reports/attendances", requireAnyPermission(["attendance_report", "attendances"]), attendancesReportRoutes);
   app.use(
     "/api/reports/staff-performance",
     requirePermission("staff_performance_report"),
