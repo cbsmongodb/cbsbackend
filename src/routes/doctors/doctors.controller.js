@@ -1,6 +1,24 @@
 import Doctor from "../../models/Doctor.js";
 
-const POPULATE = "profile doctorCategory hospitals.hospital";
+const POPULATE = "profile doctorCategory hospitals.hospital pharmacies";
+
+// The Doctor form sends a plain list of hospital ids. Turn it into the
+// embedded hospitals list, keeping floor / room / notes of hospitals that stay.
+function applyHospitalIds(body, current) {
+  if (!Array.isArray(body.hospitalIds)) return;
+  const previous = new Map(
+    (current?.hospitals || []).map((h) => [String(h.hospital?._id || h.hospital), h])
+  );
+  const seen = new Set();
+  body.hospitals = body.hospitalIds
+    .map((id) => String(id?._id || id))
+    .filter((id) => id && !seen.has(id) && seen.add(id))
+    .map((id) => {
+      const p = previous.get(id);
+      return p ? { hospital: id, floor: p.floor, room: p.room, additionalInfo: p.additionalInfo } : { hospital: id };
+    });
+  delete body.hospitalIds;
+}
 
 export async function getAllDoctors(req, res) {
   try {
@@ -55,6 +73,7 @@ export async function getDoctor(req, res) {
 
 export async function createDoctor(req, res) {
   try {
+    applyHospitalIds(req.body, null);
     const doctor = await Doctor.create(req.body);
     res.status(201).json(doctor);
   } catch (err) {
@@ -72,6 +91,9 @@ export async function createDoctor(req, res) {
 
 export async function updateDoctor(req, res) {
   try {
+    const current = await Doctor.findById(req.params.id).select("hospitals");
+    if (!current) return res.status(404).json({ error: "Doctor not found" });
+    applyHospitalIds(req.body, current);
     const doctor = await Doctor.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,

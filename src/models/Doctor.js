@@ -27,6 +27,7 @@ const doctorSchema = new mongoose.Schema(
     doctorCategory: { type: mongoose.Schema.Types.ObjectId, ref: "DoctorCategory", required: true },
 
     hospitals: [doctorHospitalSchema],
+    pharmacies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Pharmacy" }],
 
     isActive: { type: Boolean, default: false },
     isBudgeted: { type: Boolean, default: false },
@@ -36,6 +37,11 @@ const doctorSchema = new mongoose.Schema(
 
 doctorSchema.virtual("name").get(function () {
   return [this.firstName, this.lastName].filter(Boolean).join(" ");
+});
+// the hospitals as a plain list (populated docs or ids) — what the Doctor
+// form's multi-select reads; saving it is handled in doctors.controller.js
+doctorSchema.virtual("hospitalIds").get(function () {
+  return (this.hospitals || []).map((h) => h.hospital).filter(Boolean);
 });
 doctorSchema.set("toJSON", { virtuals: true });
 
