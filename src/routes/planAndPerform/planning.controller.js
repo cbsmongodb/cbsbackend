@@ -8,6 +8,12 @@ import { distanceInMeters } from "../../utils/geo.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
+// these roles see their division elsewhere, but here only their OWN plannings:
+// they can list, create, edit and delete only plans where they are the performer
+const OWN_PLANNINGS_ROLES = new Set(["product manager"]);
+const ownPlanningsOnly = (emp) => OWN_PLANNINGS_ROLES.has((emp?.role?.name || "").toLowerCase().trim());
+const isOwnPlan = (plan, emp) => String(plan.performer) === String(emp._id);
+
 const POPULATE = "employee hospital pharmacy author performer";
 
 export async function getAllPlannings(req, res) {
@@ -21,7 +27,7 @@ export async function getAllPlannings(req, res) {
       if (req.query.period_to) filter.period.$lte = new Date(req.query.period_to);
     }
 
-    const scopeIds = await getScopeEmployeeIds(req.employee);
+    const scopeIds = ownPlanningsOnly(req.employee) ? [req.employee._id] : await getScopeEmployeeIds(req.employee);
     if (scopeIds) {
       const scopeSet = new Set(scopeIds.map(String));
       if (filter.performer) {
@@ -79,7 +85,7 @@ export async function createPlanning(req, res) {
     const plan = await PlanConfiguration.create({
       ...req.body,
       author: req.body.author || req.employee._id,
-      performer: req.body.performer || req.employee._id,
+      performer: ownPlanningsOnly(req.employee) ? req.employee._id : req.body.performer || req.employee._id,
       status: req.body.status || "planned",
     });
     const populated = await plan.populate(POPULATE);
@@ -98,6 +104,10 @@ export async function updatePlanning(req, res) {
   try {
     const plan = await PlanConfiguration.findById(req.params.id);
     if (!plan) return res.status(404).json({ error: "Plan not found" });
+    if (ownPlanningsOnly(req.employee) && !isOwnPlan(plan, req.employee)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (ownPlanningsOnly(req.employee)) delete req.body.performer;
 
     const today = new Date();
     const planDay = new Date(plan.period);
@@ -118,6 +128,10 @@ export async function updatePlanning(req, res) {
 
 export async function deletePlanning(req, res) {
   try {
+    if (ownPlanningsOnly(req.employee)) {
+      const own = await PlanConfiguration.findById(req.params.id).select("performer");
+      if (own && !isOwnPlan(own, req.employee)) return res.status(403).json({ error: "Forbidden" });
+    }
     const plan = await PlanConfiguration.findByIdAndDelete(req.params.id);
     if (!plan) return res.status(404).json({ error: "Plan not found" });
     await PlanConfigurationDoctor.deleteMany({ planConfiguration: plan._id });

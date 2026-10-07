@@ -28,6 +28,7 @@ import tasksRoutes from "./routes/planAndPerform/tasks.routes.js";
 import efficiencyRoutes from "./routes/reports/efficiency.routes.js";
 import reimbursementRoutes from "./routes/reports/reimbursement.routes.js";
 import attendancesReportRoutes from "./routes/reports/attendances.routes.js";
+import prescriptionsReportRoutes from "./routes/reports/prescriptionsReport.routes.js";
 import staffPerformanceRoutes from "./routes/reports/staffPerformance.routes.js";
 import prescriptionsRoutes from "./routes/prescriptions/prescriptions.routes.js";
 import employeeTargetsRoutes from "./routes/employeeTargets/employeeTargets.routes.js";
@@ -139,6 +140,7 @@ app.use(
     requirePermission("reimbursement_report"),
     reimbursementRoutes
   );
+  app.use("/api/reports/prescriptions", requirePermission("prescriptions_report"), prescriptionsReportRoutes);
   app.use("/api/reports/attendances", requireAnyPermission(["attendance_report", "attendances"]), attendancesReportRoutes);
   app.use(
     "/api/reports/staff-performance",

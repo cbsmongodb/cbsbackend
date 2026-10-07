@@ -34,7 +34,8 @@ export async function getVisibleGroups(requester) {
   // 2) Division Manager role who isn't set as Section.head -> the whole
   //    division their own group belongs to
   const roleName = (requester?.role?.name || "").toLowerCase().trim();
-  if (roleName === "division manager" && requester.group) {
+  const DIVISION_WIDE_ROLES = ["division manager", "product manager"];
+  if (DIVISION_WIDE_ROLES.includes(roleName) && requester.group) {
     const own = await Group.findById(requester.group).select("section");
     if (own?.section) {
       const divisionGroups = await Group.find({ section: own.section });

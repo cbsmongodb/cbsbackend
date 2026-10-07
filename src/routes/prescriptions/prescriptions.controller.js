@@ -3,6 +3,7 @@ import DrugPrescription from "../../models/DrugPrescription.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
 import Drug from "../../models/Drug.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 // GET /api/prescriptions
 // ?search=&doctor=&employee=&fromDate=&toDate=&isActive=&page=&limit=
@@ -16,6 +17,16 @@ export async function getAllPrescriptions(req, res) {
     const filter = { isActive };
     if (doctor) filter.doctor = doctor;
     if (employee) filter.employee = employee;
+    // only the employees this role may see (division / group / self)
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds) {
+      const allowed = new Set(scopeIds.map(String));
+      if (filter.employee) {
+        if (!allowed.has(String(filter.employee))) filter.employee = { $in: [] };
+      } else {
+        filter.employee = { $in: scopeIds };
+      }
+    }
     if (fromDate && toDate) {
       const to = new Date(toDate);
       to.setHours(23, 59, 59, 999);
