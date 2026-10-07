@@ -9,7 +9,14 @@ import Employee from "../models/Employee.js";
 //   - everyone else sees no groups (their own baseline data only)
 // these roles only ever see their OWN data (attendance, reports...), even if
 // they happen to be set as head of a group or section
-const SELF_ONLY_ROLES = new Set(["sales manager"]);
+const SELF_ONLY_ROLES = new Set([
+  "sales manager",
+  "aesthetics team",
+  "head pharmacist",
+  "warehouse manager",
+  "accounts and logistics",
+  "regulatory",
+]);
 
 export async function getVisibleGroups(requester) {
   if (SELF_ONLY_ROLES.has((requester?.role?.name || "").toLowerCase().trim())) return [];
