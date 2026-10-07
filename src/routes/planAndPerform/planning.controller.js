@@ -8,8 +8,8 @@ import { distanceInMeters } from "../../utils/geo.js";
 import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
-// these roles see their division elsewhere, but here only their OWN plannings:
-// they can list, create, edit and delete only plans where they are the performer
+// these roles SEE their division's plannings (list, Field Team Status), but can
+// create, edit and delete only plans where they themselves are the performer
 const OWN_PLANNINGS_ROLES = new Set(["product manager"]);
 const ownPlanningsOnly = (emp) => OWN_PLANNINGS_ROLES.has((emp?.role?.name || "").toLowerCase().trim());
 const isOwnPlan = (plan, emp) => String(plan.performer) === String(emp._id);
@@ -27,7 +27,7 @@ export async function getAllPlannings(req, res) {
       if (req.query.period_to) filter.period.$lte = new Date(req.query.period_to);
     }
 
-    const scopeIds = ownPlanningsOnly(req.employee) ? [req.employee._id] : await getScopeEmployeeIds(req.employee);
+    const scopeIds = await getScopeEmployeeIds(req.employee);
     if (scopeIds) {
       const scopeSet = new Set(scopeIds.map(String));
       if (filter.performer) {
