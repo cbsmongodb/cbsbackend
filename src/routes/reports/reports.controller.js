@@ -227,13 +227,23 @@ export async function exportReimbursementReport(req, res) {
   }
 }
 
+// A date picked in the UI ("2026-10-07") means that whole day in Georgia (UTC+4):
+// from 00:00 to 23:59:59. new Date("2026-10-07") alone is midnight UTC, which
+// cut off every check-in made on the last day of the range (incl. today).
+function dayStart(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00+04:00`) : new Date(s);
+}
+function dayEnd(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T23:59:59.999+04:00`) : new Date(s);
+}
+
 export async function getAttendanceReport(req, res) {
   try {
     const filter = {};
     if (req.query.from || req.query.to) {
       filter.attendanceTime = {};
-      if (req.query.from) filter.attendanceTime.$gte = new Date(req.query.from);
-      if (req.query.to) filter.attendanceTime.$lte = new Date(req.query.to);
+      if (req.query.from) filter.attendanceTime.$gte = dayStart(req.query.from);
+      if (req.query.to) filter.attendanceTime.$lte = dayEnd(req.query.to);
     }
     if (req.query.employee) filter.employee = req.query.employee;
 

@@ -46,6 +46,7 @@ export async function getVisibleGroups(requester) {
 // Exactly these roles see everyone's data (no scoping). Everyone else —
 // including Division Manager and Group Manager — is scoped to their own people.
 const GLOBAL_ROLES = new Set([
+  "admin",
   "director",
   "system administrator",
   "finance manager",

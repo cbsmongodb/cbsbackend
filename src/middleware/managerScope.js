@@ -2,7 +2,7 @@ import Role from "../models/Role.js";
 import Employee from "../models/Employee.js";
 import Section from "../models/Section.js";
 import LeaveEntry from "../models/LeaveEntry.js";
-import { getVisibleGroups, getVisibleEmployeeIds } from "../utils/groupVisibility.js";
+import { getVisibleGroups, getVisibleEmployeeIds, getScopeEmployeeIds } from "../utils/groupVisibility.js";
 
 // Division Manager / Group Manager are "scoped managers": every admin list
 // they open is limited to their own division (or group), and every write
@@ -157,7 +157,15 @@ export async function employeeScope(req, res, next) {
 // /api/leaves — only own people's leaves; company rest-days stay read-only
 export async function leaveScope(req, res, next) {
   try {
-    if (!isScopedManager(req.employee)) return next();
+    if (!isScopedManager(req.employee)) {
+      // the leave list is limited to the people this role can see
+      // (company-wide roles and admin get everything)
+      if (req.method === "GET" && !firstSegment(req)) {
+        const ids = await getScopeEmployeeIds(req.employee);
+        if (ids) req.scopeEmployeeIds = ids.map(String);
+      }
+      return next();
+    }
     const seg = firstSegment(req);
 
     if (seg === "rest-days") {

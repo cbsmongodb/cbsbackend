@@ -154,7 +154,14 @@ app.use(
 
   // dashboard shows every user their OWN leave balance — no admin permission
   app.use("/api/leaves", leaveBalanceRoutes);
-  app.use("/api/leaves", requirePermission("leaves"), leaveRoutes);
+  app.use(
+    "/api/leaves",
+    (req, res, next) =>
+      req.method === "GET" && req.path === "/"
+        ? requireAnyPermission(["leaves", "attendances"])(req, res, next)
+        : requirePermission("leaves")(req, res, next),
+    leaveRoutes
+  );
 
   app.use("/api/dashboard", dashboardRoutes);
 
