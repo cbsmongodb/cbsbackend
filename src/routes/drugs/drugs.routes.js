@@ -5,7 +5,8 @@ import Manufacturer from "../../models/Manufacturer.js";
 import ProducingCountry from "../../models/ProducingCountry.js";
 import Profile from "../../models/Profile.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
-import { getVisibleDrugIds } from "../../utils/groupVisibility.js";
+import { getVisibleDrugIds, getVisibleGroups } from "../../utils/groupVisibility.js";
+import Group from "../../models/Group.js";
 import { requireAuth } from "../../middleware/auth.js";
 
 const router = express.Router();
@@ -61,7 +62,42 @@ async function getAllDrugs(req, res) {
 }
 
 router.get("/", getAllDrugs);
-router.post("/", drugC.createOne);
+// a drug created by a non-admin (e.g. Product Manager) is attached to the
+// groups they can see (their division), otherwise it would vanish from their list
+async function createDrug(req, res) {
+  try {
+    const doc = await Drug.create(req.body);
+    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    if (!isAdmin) {
+      let groupIds = (await getVisibleGroups(req.employee)).map((g) => g._id);
+      if (!groupIds.length && req.employee.group) groupIds = [req.employee.group];
+      if (groupIds.length) await Group.updateMany({ _id: { $in: groupIds } }, { $addToSet: { drugs: doc._id } });
+    }
+    res.status(201).json(doc);
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ error: Object.values(err.errors).map((e) => e.message).join(", ") });
+    }
+    if (err.code === 11000) return res.status(400).json({ error: "A drug with this name already exists" });
+    console.error("createDrug failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// non-admins may only open / edit / delete drugs of their own division
+async function onlyVisibleDrug(req, res, next) {
+  try {
+    if (req.employee?.role?.name?.toLowerCase() === "admin") return next();
+    const ids = await getVisibleDrugIds(req.employee);
+    if (!ids.includes(String(req.params.id))) return res.status(403).json({ error: "Not allowed" });
+    next();
+  } catch (err) {
+    console.error("onlyVisibleDrug failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+router.post("/", createDrug);
 
 router.get(
   "/export",
@@ -226,9 +262,9 @@ router.post("/bulk-import", async (req, res) => {
   }
 });
 
-router.get("/:id", drugC.getOne);
-router.put("/:id", drugC.updateOne);
-router.delete("/:id", drugC.deleteOne);
+router.get("/:id", onlyVisibleDrug, drugC.getOne);
+router.put("/:id", onlyVisibleDrug, drugC.updateOne);
+router.delete("/:id", onlyVisibleDrug, drugC.deleteOne);
 
 export default router;
 

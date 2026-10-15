@@ -17,7 +17,7 @@ const VIEW = { ...OFF, read: 1 };
 const EDIT = { ...OFF, read: 1, add: 1, update: 1 };
 
 const ACCESS = {
-  drugs: VIEW, product_types: VIEW, manufacturers: VIEW, manufacturer_countries: VIEW,
+  drugs: { ...OFF, read: 1, add: 1, update: 1, delete: 1, export: 1 }, product_types: VIEW, manufacturers: VIEW, manufacturer_countries: VIEW,
   doctors: EDIT, hospitals: EDIT,
   doctor_categories: VIEW, doctor_sub_categories: VIEW, pharmacies: VIEW, profiles: VIEW,
   attendance_report: VIEW,
