@@ -18,8 +18,8 @@ export async function getEfficiencyReport(req, res) {
     const planFilter = {};
     if (from || to) {
       planFilter.period = {};
-      if (from) planFilter.period.$gte = new Date(from);
-      if (to) planFilter.period.$lte = new Date(to);
+      if (from) planFilter.period.$gte = dayStart(from);
+      if (to) planFilter.period.$lte = dayEnd(to);
     }
     if (employee) planFilter.performer = employee;
     if (hospital) planFilter.hospital = hospital;
@@ -93,8 +93,8 @@ export async function getReimbursementReport(req, res) {
     const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
     if (from || to) {
       filter.period = {};
-      if (from) filter.period.$gte = new Date(from);
-      if (to) filter.period.$lte = new Date(to);
+      if (from) filter.period.$gte = dayStart(from);
+      if (to) filter.period.$lte = dayEnd(to);
     }
     if (employee) filter.performer = employee;
 
@@ -149,8 +149,8 @@ export async function exportReimbursementReport(req, res) {
     const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
     if (from || to) {
       filter.period = {};
-      if (from) filter.period.$gte = new Date(from);
-      if (to) filter.period.$lte = new Date(to);
+      if (from) filter.period.$gte = dayStart(from);
+      if (to) filter.period.$lte = dayEnd(to);
     }
     if (employee) filter.performer = employee;
 
@@ -370,9 +370,8 @@ export async function getStaffPerformanceReport(req, res) {
       rangeStart = monthStart;
       rangeEnd = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
     } else {
-      rangeStart = from ? new Date(from) : new Date(new Date().setDate(1));
-      rangeEnd = to ? new Date(to) : new Date();
-      rangeEnd.setHours(23, 59, 59, 999);
+      rangeStart = from ? dayStart(from) : new Date(new Date().setDate(1));
+      rangeEnd = to ? dayEnd(to) : new Date();
     }
 
     // 3. per-employee computation

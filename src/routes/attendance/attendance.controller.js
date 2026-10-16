@@ -6,6 +6,18 @@ import { computeAttendanceStatus } from "../../utils/attendanceStatus.js";
 import { distanceInMeters } from "../../utils/geo.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
+// "today" must be today in Georgia (UTC+4), not in the server's own timezone (UTC on Render)
+const TZ = "Asia/Tbilisi";
+function georgiaDate(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(d); // YYYY-MM-DD
+}
+function georgiaDayStart(d = new Date()) {
+  return new Date(`${georgiaDate(d)}T00:00:00+04:00`);
+}
+function georgiaDayEnd(d = new Date()) {
+  return new Date(`${georgiaDate(d)}T23:59:59.999+04:00`);
+}
+
 export async function setCurrentLocation(req, res) {
   try {
     const { lat, lng, address } = req.body;
@@ -41,8 +53,7 @@ export async function setCurrentLocation(req, res) {
 
 export async function getCurrentLocations(req, res) {
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = georgiaDayStart();
 
     const locations = await Address.find({
       addressableType: "Employee",
@@ -89,8 +100,7 @@ export function markAttendance(io) {
 
       // refuse a second check-in (or a check-out without a check-in) —
       // happens when two buttons on the page (sidebar + dashboard) are out of sync
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = georgiaDayStart();
       const latest = await Attendance.findOne({
         employee: req.employee._id,
         attendanceTime: { $gte: startOfDay },
@@ -150,8 +160,7 @@ export function markAttendance(io) {
 
 export async function getLiveFeed(req, res) {
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = georgiaDayStart();
 
     const planQuery = {
       period: { $gte: startOfDay },
@@ -284,10 +293,8 @@ export async function getLiveFeed(req, res) {
 export async function getDailyStatus(req, res) {
   try {
     const day = req.query.date ? new Date(req.query.date) : new Date();
-    const startOfDay = new Date(day);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(day);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = georgiaDayStart(day);
+    const endOfDay = georgiaDayEnd(day);
 
     const employees = await Employee.find({ isActive: true }).select("firstName lastName");
 
@@ -329,10 +336,8 @@ export async function getEmployeeDay(req, res) {
     }
 
     const day = date ? new Date(date) : new Date();
-    const startOfDay = new Date(day);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(day);
-    endOfDay.setHours(23, 59, 59, 999);
+    const startOfDay = georgiaDayStart(day);
+    const endOfDay = georgiaDayEnd(day);
 
     const employee = await Employee.findById(employeeId).select("firstName lastName");
 
@@ -462,8 +467,7 @@ export async function getEmployeeDay(req, res) {
 
 export async function getMyStatus(req, res) {
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = georgiaDayStart();
 
     // only the standalone daily checkin/checkout button's own history —
     // plan-triggered (hospital visit) attendance records must not affect
