@@ -21,6 +21,7 @@ const ACCESS = {
   doctors: EDIT, hospitals: EDIT,
   doctor_categories: VIEW, doctor_sub_categories: VIEW, pharmacies: VIEW, profiles: VIEW,
   attendance_report: VIEW,
+  efficiency_report: VIEW, // who went where, which doctors (own division only)
   attendances: { ...VIEW, live_feeds: 1, last_locations: 1 }, // Live Feed, Field Team Status, Attendance Status (division)
   prescriptions: VIEW, prescriptions_report: VIEW,
   plannings: { ...EDIT, delete: 1 }, // own plannings only (planning.controller.js)
