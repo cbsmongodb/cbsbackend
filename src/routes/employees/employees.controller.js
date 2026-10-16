@@ -3,7 +3,7 @@ import Employee from "../../models/Employee.js";
 import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
 import Group from "../../models/Group.js";
-import { getVisibleEmployeeIds } from "../../utils/groupVisibility.js";
+import { getVisibleEmployeeIds, seesEverything } from "../../utils/groupVisibility.js";
 
 // optional ObjectId-ref fields (group) arrive as "" from an
 // unselected <select> — Mongoose can't cast an empty string to ObjectId,
@@ -43,7 +43,7 @@ export async function getAllEmployees(req, res) {
     // group/section-scoped visibility — admins see everyone; a Section head
     // (Division Manager) sees their section's groups; a Group head sees
     // their own group; everyone else sees only themselves
-    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    const isAdmin = seesEverything(req.employee);
     if (!isAdmin) {
       const visibleIds = await getVisibleEmployeeIds(req.employee);
       filter._id = { $in: visibleIds };

@@ -2,7 +2,7 @@ import EmployeeTarget from "../../models/EmployeeTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import Drug from "../../models/Drug.js";
-import { getVisibleDrugIds } from "../../utils/groupVisibility.js";
+import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
 
 // GET /api/employee-targets?search=&employee=&fromDate=&toDate=&page=&limit=
 export async function getAllEmployeeTargets(req, res) {
@@ -91,7 +91,7 @@ export async function deleteEmployeeTarget(req, res) {
 // GET /api/employee-targets/visible-drugs — drugs the manager may target
 export async function getVisibleDrugsForTarget(req, res) {
   try {
-    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    const isAdmin = seesEverything(req.employee);
     let filter = {};
     if (!isAdmin) {
       const visibleIds = await getVisibleDrugIds(req.employee);

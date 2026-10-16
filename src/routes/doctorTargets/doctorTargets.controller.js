@@ -3,7 +3,7 @@ import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
 import Drug from "../../models/Drug.js";
-import { getVisibleDrugIds } from "../../utils/groupVisibility.js";
+import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
 
 // GET /api/doctor-targets?search=&doctor=&employee=&fromDate=&toDate=&page=&limit=
 export async function getAllDoctorTargets(req, res) {
@@ -99,7 +99,7 @@ export async function deleteDoctorTarget(req, res) {
 // GET /api/doctor-targets/visible-drugs
 export async function getVisibleDrugsForDoctorTarget(req, res) {
   try {
-    const isAdmin = req.employee?.role?.name?.toLowerCase() === "admin";
+    const isAdmin = seesEverything(req.employee);
     let filter = {};
     if (!isAdmin) {
       const visibleIds = await getVisibleDrugIds(req.employee);
