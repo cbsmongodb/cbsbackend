@@ -51,7 +51,9 @@ export async function getBalance(req, res) {
 
     const used = { paid: 0, unpaid: 0, sick: 0 };
     entries.forEach((e) => {
-      used[e.type] += e.daysCount;
+      if (e.status && e.status !== "approved") return; // pending / rejected / canceled don't count
+      if (e.days?.length) e.days.forEach((d) => { used[d.type] += 1; });
+      else if (used[e.type] !== undefined) used[e.type] += e.daysCount;
     });
 
     res.json({
@@ -92,6 +94,8 @@ export async function setBalance(req, res) {
 export async function getAllEntries(req, res) {
   try {
     const filter = {};
+    // pending / rejected / canceled requests are not "on leave"
+    filter.status = req.query.status ? req.query.status : { $in: ["approved", null] };
     if (req.query.employee) filter.employee = req.query.employee;
     else if (req.scopeEmployeeIds) filter.employee = { $in: req.scopeEmployeeIds };
     if (req.query.type) filter.type = req.query.type;

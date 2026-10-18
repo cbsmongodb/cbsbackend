@@ -49,6 +49,7 @@ import {
 } from "./routes/admin/admin.routes.js";
 import leaveRoutes from "./routes/leaves/leave.routes.js";
 import leaveBalanceRoutes from "./routes/leaves/leaveBalance.routes.js";
+import leaveRequestRoutes from "./routes/leaves/leaveRequests.routes.js";
 import dashboardRoutes from "./routes/dashboard/dashboard.routes.js";
 import notificationsRoutes from "./routes/notifications/notifications.routes.js";
 import { planConfigRoutes } from "./routes/config/config.routes.js";
@@ -156,6 +157,7 @@ app.use(
 
   // dashboard shows every user their OWN leave balance — no admin permission
   app.use("/api/leaves", leaveBalanceRoutes);
+  app.use("/api/leave-requests", leaveRequestRoutes);
   app.use(
     "/api/leaves",
     (req, res, next) =>
