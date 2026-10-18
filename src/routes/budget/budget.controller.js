@@ -6,6 +6,9 @@ import Prescription from "../../models/Prescription.js";
 import DrugPrescription from "../../models/DrugPrescription.js";
 import DoctorTarget from "../../models/DoctorTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
+import DoctorEntryItem from "../../models/DoctorEntryItem.js";
+import "../../models/Drug.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 const POPULATE = "employee doctor region section group";
 
@@ -101,12 +104,22 @@ export async function getBudgetAllotment(req, res) {
   try {
     const employeeId = req.query.employee_id || String(req.employee._id);
 
+    // only people this user may see (division / group managers -> their own people)
+    const scope = await getScopeEmployeeIds(req.employee);
+    if (scope && !scope.map(String).includes(String(employeeId))) {
+      return res.status(403).json({ error: "Not allowed" });
+    }
+
+    // a picked date means that whole day in Georgia (UTC+4); default = last month
+    const day = (str, end) => (/^\d{4}-\d{2}-\d{2}$/.test(str)
+      ? new Date(`${str}T${end ? "23:59:59.999" : "00:00:00"}+04:00`)
+      : new Date(str));
     const now = new Date();
-    const defaultStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const defaultEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-    const startDate = req.query.start_date ? new Date(req.query.start_date) : defaultStart;
-    const endDate = req.query.end_date ? new Date(req.query.end_date) : defaultEnd;
-    endDate.setHours(23, 59, 59, 999);
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const lmStr = lastMonth.toISOString().slice(0, 10);
+    const lmEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
+    const startDate = day(req.query.start_date || lmStr, false);
+    const endDate = day(req.query.end_date || lmEnd, true);
 
     const filter = { employee: employeeId, date: { $gte: startDate, $lte: endDate } };
 
@@ -117,36 +130,22 @@ export async function getBudgetAllotment(req, res) {
 
     const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
 
-    // prescription + sales amounts — computed fresh across every doctor
-    // this employee has prescribed to in the range (not just budgeted ones)
-    const prescriptions = await Prescription.find({
+    // allotmentFromDataEntry: target / sales / prescriptions come from Data Entry
+    // (DoctorEntryItem, monthly) - the same numbers the reports and Data Entry page show
+    const sd = new Date(startDate.getTime() + 4 * 3600e3); // Georgian calendar date
+    const monthFrom = new Date(Date.UTC(sd.getUTCFullYear(), sd.getUTCMonth(), 1));
+    const entries = await DoctorEntryItem.find({
       employee: employeeId,
-      date: { $gte: startDate, $lte: endDate },
-    }).select("_id");
-    const items = await DrugPrescription.find({
-      prescription: { $in: prescriptions.map((p) => p._id) },
+      period: { $gte: monthFrom, $lte: endDate },
     }).populate("drug", "price");
     let totalPrescriptionAmount = 0;
     let totalSalesAmount = 0;
-    items.forEach((it) => {
-      const price = it.drug?.price || 0;
-      totalPrescriptionAmount += (it.totalNoOfBoxes || 0) * price;
-      totalSalesAmount += (it.saleBoxes || 0) * price;
-    });
-
-    // target amount — same approach, across every DoctorTarget this
-    // employee has in the range
-    const doctorTargets = await DoctorTarget.find({
-      employee: employeeId,
-      date: { $gte: startDate, $lte: endDate },
-    }).select("_id");
-    const targetRows = await MedicineTarget.find({
-      medicineTargatableType: "DoctorTarget",
-      medicineTargatableId: { $in: doctorTargets.map((t) => t._id) },
-    }).populate("drug", "price");
     let totalTargetAmount = 0;
-    targetRows.forEach((t) => {
-      totalTargetAmount += (t.totalNoOfBoxes || 0) * (t.drug?.price || 0);
+    entries.forEach((it) => {
+      const price = it.drug?.price || 0;
+      totalPrescriptionAmount += (it.prescription || 0) * price;
+      totalSalesAmount += (it.sale || 0) * price;
+      totalTargetAmount += (it.quota || 0) * price;
     });
 
     const chartData = await Budget.aggregate([
