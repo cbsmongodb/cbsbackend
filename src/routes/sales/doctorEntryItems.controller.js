@@ -5,6 +5,8 @@ import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
 import EmployeeSale from "../../models/EmployeeSale.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
+import DrugBonus from "../../models/DrugBonus.js";
+import Drug from "../../models/Drug.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 function normalizeToMonthStart(dateLike) {
@@ -42,6 +44,24 @@ async function pharmacySalesByDrug(employeeId, period) {
     const k = String(l.drug);
     map.set(k, (map.get(k) || 0) + (l.totalNoOfBoxes || 0));
   });
+  return map;
+}
+
+
+// bonus per box for a month: the drug's monthly bonus (Drugs page "Bonuses by month"),
+// otherwise the drug's general bonus -> Map(drugId -> value). Drugs with neither are left out.
+async function bonusesForPeriod(drugIds, period) {
+  const start = new Date(period);
+  const ids = [...new Set(drugIds.map(String))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const monthly = await DrugBonus.find({
+    drug: { $in: ids },
+    period: { $gte: new Date(start.getTime() - 86400000), $lte: new Date(start.getTime() + 86400000) },
+  });
+  monthly.forEach((b) => map.set(String(b.drug), b.value));
+  const drugs = await Drug.find({ _id: { $in: ids.filter((id) => !map.has(id)) } }).select("bonus");
+  drugs.forEach((d) => { if (d.bonus) map.set(String(d._id), d.bonus); });
   return map;
 }
 
@@ -168,6 +188,7 @@ export async function getListing(req, res) {
       items,
       drugTotals: [...summaryByDrug.values()],
       pharmacySales: Object.fromEntries(pharmacy),
+      bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id")).map((d) => d._id), periodDate)),
     });
   } catch (err) {
     console.error("getListing failed:", err);
@@ -221,6 +242,10 @@ export async function submitEntries(req, res) {
     }
 
     const periodDate = normalizeToMonthStart(period);
+    const bonus = await bonusesForPeriod(
+      doctorEntries.flatMap((e) => (e.drugs || []).map((d) => d.drugId)).filter(Boolean),
+      periodDate
+    );
 
     for (const entry of doctorEntries) {
       for (const drugRow of entry.drugs || []) {
@@ -238,7 +263,7 @@ export async function submitEntries(req, res) {
             quota: drugRow.quota || 0,
             prescription: drugRow.prescription || 0,
             sale: drugRow.sale || 0,
-            budget: drugRow.budget || 0,
+            budget: bonus.has(String(drugRow.drugId)) ? bonus.get(String(drugRow.drugId)) : (drugRow.budget || 0),
           },
           { upsert: true, new: true, runValidators: true }
         );
