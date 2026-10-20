@@ -262,8 +262,11 @@ export async function submitEntries(req, res) {
             issuedBudget: entry.issuedBudget || 0,
             quota: drugRow.quota || 0,
             prescription: drugRow.prescription || 0,
-            sale: drugRow.sale || 0,
-            budget: bonus.has(String(drugRow.drugId)) ? bonus.get(String(drugRow.drugId)) : (drugRow.budget || 0),
+            // sale / budget: only when the form sent it (new rows don't -> stored values stay)
+            ...(drugRow.sale !== undefined ? { sale: drugRow.sale || 0 } : {}),
+            ...(bonus.has(String(drugRow.drugId))
+              ? { budget: bonus.get(String(drugRow.drugId)) }
+              : drugRow.budget !== undefined ? { budget: drugRow.budget || 0 } : {}),
           },
           { upsert: true, new: true, runValidators: true }
         );
