@@ -1,4 +1,6 @@
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
+import PlanConfiguration from "../../models/PlanConfiguration.js";
+import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
@@ -368,6 +370,32 @@ export async function deleteCoefficientOverride(req, res) {
     res.json({ success: true });
   } catch (err) {
     console.error("deleteCoefficientOverride failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/doctor-entry-items/visit-counts?employee=&period=MM/YYYY
+// -> { doctorId: number of completed visits this month } (fills the "visits" field)
+export async function getVisitCounts(req, res) {
+  try {
+    const { employee, period } = req.query;
+    if (!employee || !period) return res.status(400).json({ error: "employee and period are required" });
+    const [mm, yyyy] = String(period).split("/").map(Number);
+    if (!mm || !yyyy) return res.status(400).json({ error: "period must be MM/YYYY" });
+    const from = new Date(`${yyyy}-${String(mm).padStart(2, "0")}-01T00:00:00+04:00`);
+    const nm = mm === 12 ? 1 : mm + 1, ny = mm === 12 ? yyyy + 1 : yyyy;
+    const to = new Date(`${ny}-${String(nm).padStart(2, "0")}-01T00:00:00+04:00`);
+    const plans = await PlanConfiguration.find({
+      performer: employee,
+      period: { $gte: from, $lt: to },
+      status: { $in: ["i_went", "i_left", "completed"] },
+    }).select("_id");
+    const rows = await PlanConfigurationDoctor.find({ planConfiguration: { $in: plans.map((p) => p._id) } }).select("doctor");
+    const counts = {};
+    rows.forEach((r) => { const k = String(r.doctor); counts[k] = (counts[k] || 0) + 1; });
+    res.json(counts);
+  } catch (err) {
+    console.error("getVisitCounts failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
