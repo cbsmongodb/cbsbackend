@@ -3,6 +3,8 @@ import PlanConfiguration from "../../models/PlanConfiguration.js";
 import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
+import EmployeeSale from "../../models/EmployeeSale.js";
+import MedicineTarget from "../../models/MedicineTarget.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 function normalizeToMonthStart(dateLike) {
@@ -20,6 +22,29 @@ function previousPeriodOf(period) {
   return new Date(d.getFullYear(), d.getMonth() - 1, 1);
 }
 
+
+// real sales the reps type in on "Sales from pharmacies" (EmployeeSale + its drug lines),
+// per drug, for one employee and one month -> Map(drugId -> boxes)
+async function pharmacySalesByDrug(employeeId, period) {
+  const start = new Date(period);
+  const next = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+  // half a day of slack so dates saved at Georgian or UTC midnight both fall in the month
+  const from = new Date(start.getTime() - 12 * 3600e3);
+  const to = new Date(next.getTime() - 12 * 3600e3);
+  const sales = await EmployeeSale.find({ employee: employeeId, date: { $gte: from, $lt: to } }).select("_id");
+  const map = new Map();
+  if (!sales.length) return map;
+  const lines = await MedicineTarget.find({
+    medicineTargatableType: "EmployeeSale",
+    medicineTargatableId: { $in: sales.map((x) => x._id) },
+  }).select("drug totalNoOfBoxes");
+  lines.forEach((l) => {
+    const k = String(l.drug);
+    map.set(k, (map.get(k) || 0) + (l.totalNoOfBoxes || 0));
+  });
+  return map;
+}
+
 async function recalculateForPeriod(employeeId, period) {
   const items = await DoctorEntryItem.find({ employee: employeeId, period });
   if (items.length === 0) return;
@@ -32,6 +57,12 @@ async function recalculateForPeriod(employeeId, period) {
     if (!totalsByDrug[key]) totalsByDrug[key] = { sale: 0, prescription: 0 };
     totalsByDrug[key].sale += item.sale || 0;
     totalsByDrug[key].prescription += item.prescription || 0;
+  }
+
+  // real pharmacy sales win over the doctors' typed "sale" numbers (when they were entered)
+  const pharmacy = await pharmacySalesByDrug(employeeId, period);
+  for (const [drugKey, boxes] of pharmacy) {
+    if (totalsByDrug[drugKey]) totalsByDrug[drugKey].sale = boxes;
   }
 
   const overrides = await CoefficientOverride.find({ employee: employeeId, period });
@@ -132,9 +163,11 @@ export async function getListing(req, res) {
     const summaries = await DoctorEntrySummary.find({ employee, period: periodDate });
     const summaryByDrug = new Map(summaries.map((s) => [String(s.drug), s]));
 
+    const pharmacy = await pharmacySalesByDrug(employee, periodDate);
     res.json({
       items,
       drugTotals: [...summaryByDrug.values()],
+      pharmacySales: Object.fromEntries(pharmacy),
     });
   } catch (err) {
     console.error("getListing failed:", err);
