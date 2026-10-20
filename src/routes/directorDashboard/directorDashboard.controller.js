@@ -137,153 +137,155 @@ export async function getOrders(req, res) {
 // KPI counts (newly added / active / budgeted) + per-doctor drug sales
 // breakdown, scoped by division/group via the employees who prescribed
 // to each doctor in the period.
+// GET /api/director-dashboard/doctors-report?fromDate=&toDate=&doctor=&division=&group=&page=&limit=
+// Doctors' sales are ESTIMATED: the real sales are only known per rep + drug + month
+// ("Sales from pharmacies"); they are shared out over that rep's doctors by their prescriptions:
+//   doctor's estimated boxes = doctor's prescriptions x (rep's real sales / rep's prescriptions, all doctors)
+// No real sales entered for that rep + drug + month -> unknown (not counted, flagged).
 export async function getDoctorsReport(req, res) {
   try {
     const { doctor, division, group, page, limit } = req.query;
-
-    const now = new Date();
-    const fromDate = req.query.fromDate ? new Date(req.query.fromDate) : new Date(now.getFullYear(), now.getMonth(), 1);
-    const toDate = req.query.toDate ? new Date(req.query.toDate) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    toDate.setHours(23, 59, 59, 999);
-
     const { default: Employee } = await import("../../models/Employee.js");
     const { default: Group } = await import("../../models/Group.js");
-    const { default: Prescription } = await import("../../models/Prescription.js");
-    const { default: DrugPrescription } = await import("../../models/DrugPrescription.js");
-
-    // resolve which employees are "in scope" for division/group filters
-    let scopedEmployeeIds = null;
-    if (group) {
-      // Group.members[] is basically never populated in real data — the
-      // real membership signal lives on Employee.group. Query it directly.
-      scopedEmployeeIds = await Employee.find({ group }).distinct("_id");
-    } else if (division) {
-      // "division" here is really a Section id — Section IS the division.
-      const divGroupIds = await Group.find({ section: division }).distinct("_id");
-      scopedEmployeeIds = await Employee.find({ group: { $in: divGroupIds } }).distinct("_id");
-    }
-
+    const { default: Section } = await import("../../models/Section.js");
+    const { default: DoctorEntryItem } = await import("../../models/DoctorEntryItem.js");
+    const { default: EmployeeSale } = await import("../../models/EmployeeSale.js");
+    const { default: MedicineTarget } = await import("../../models/MedicineTarget.js");
     const { getScopeEmployeeIds } = await import("../../utils/groupVisibility.js");
-    const viewerScope = await getScopeEmployeeIds(req.employee);
-    if (viewerScope) {
-      const viewerSet = new Set(viewerScope.map(String));
-      scopedEmployeeIds = scopedEmployeeIds
-        ? scopedEmployeeIds.filter((id) => viewerSet.has(String(id)))
-        : viewerScope;
+
+    // whole Georgian days; data entry is monthly, so every month the range touches counts
+    const day = (s, end) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || ""))
+      ? new Date(`${s}T${end ? "23:59:59.999" : "00:00:00"}+04:00`) : null);
+    const now = new Date();
+    const fromDate = day(req.query.fromDate, false) || new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const toDate = day(req.query.toDate, true) || new Date();
+    const g = new Date(fromDate.getTime() + 4 * 3600e3);
+    const monthFrom = new Date(Date.UTC(g.getUTCFullYear(), g.getUTCMonth(), 1));
+    const monthKey = (d) => { const x = new Date(new Date(d).getTime() + 12 * 3600e3); return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}`; };
+
+    // who is in scope (viewer's visibility + division / group filter)
+    let scoped = null;
+    if (group) scoped = await Employee.find({ group }).distinct("_id");
+    else if (division) {
+      const gids = await Group.find({ section: division }).distinct("_id");
+      scoped = await Employee.find({ group: { $in: gids } }).distinct("_id");
+    }
+    const viewer = await getScopeEmployeeIds(req.employee);
+    if (viewer) {
+      const vs = new Set(viewer.map(String));
+      scoped = scoped ? scoped.filter((id) => vs.has(String(id))) : viewer;
     }
 
-    // which doctors have a prescription from an in-scope employee this period
-    let doctorIdFilter = null;
-    if (scopedEmployeeIds) {
-      doctorIdFilter = await Prescription.find({
-        employee: { $in: scopedEmployeeIds },
-        date: { $gte: fromDate, $lte: toDate },
-      }).distinct("doctor");
-    }
+    // every data-entry line of the period (all doctors, so the rep's totals are complete)
+    const itemFilter = { period: { $gte: monthFrom, $lte: toDate } };
+    if (scoped) itemFilter.employee = { $in: scoped };
+    const items = await DoctorEntryItem.find(itemFilter).select("employee doctor drug period prescription").populate("drug", "name price");
 
-    const doctorFilter = { isActive: true };
-    if (doctor) doctorFilter._id = doctor;
-    if (doctorIdFilter) doctorFilter._id = doctorIdFilter.length ? { $in: doctorIdFilter } : { $in: [] };
+    // rep's prescriptions per drug + month
+    const rxTotal = new Map();
+    items.forEach((it) => {
+      const k = `${it.employee}|${it.drug?._id}|${monthKey(it.period)}`;
+      rxTotal.set(k, (rxTotal.get(k) || 0) + (it.prescription || 0));
+    });
+
+    // rep's REAL sales per drug + month
+    const empIds = [...new Set(items.map((it) => String(it.employee)))];
+    const saleFilter = { date: { $gte: new Date(monthFrom.getTime() - 12 * 3600e3), $lte: toDate } };
+    saleFilter.employee = { $in: scoped ? scoped : empIds };
+    const sales = await EmployeeSale.find(saleFilter).select("employee date");
+    const saleById = new Map(sales.map((s) => [String(s._id), s]));
+    const lines = sales.length
+      ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
+          .select("medicineTargatableId drug totalNoOfBoxes")
+      : [];
+    const real = new Map();
+    lines.forEach((l) => {
+      const s = saleById.get(String(l.medicineTargatableId));
+      if (!s) return;
+      const k = `${s.employee}|${l.drug}|${monthKey(s.date)}`;
+      real.set(k, (real.get(k) || 0) + (l.totalNoOfBoxes || 0));
+    });
+
+    // per doctor: prescriptions, estimated boxes / amount, per-drug breakdown
+    const byDoctor = new Map();
+    items.forEach((it) => {
+      if (!it.drug) return;
+      const k = `${it.employee}|${it.drug._id}|${monthKey(it.period)}`;
+      const id = String(it.doctor);
+      if (!byDoctor.has(id)) byDoctor.set(id, { rx: 0, boxes: 0, amount: 0, unknown: 0, drugs: new Map() });
+      const d = byDoctor.get(id);
+      const rx = it.prescription || 0;
+      const total = rxTotal.get(k) || 0;
+      let est = null;
+      if (real.has(k) && total > 0) est = rx * (real.get(k) / total);
+      const price = it.drug.price || 0;
+      d.rx += rx;
+      if (est === null) { if (rx > 0) d.unknown += 1; }
+      else { d.boxes += est; d.amount += est * price; }
+      const name = it.drug.name || "—";
+      const row = d.drugs.get(name) || { drugName: name, prescriptions: 0, saleBoxes: 0, salesAmount: 0, unknown: false };
+      row.prescriptions += rx;
+      if (est === null) { if (rx > 0) row.unknown = true; }
+      else { row.saleBoxes += est; row.salesAmount += est * price; }
+      d.drugs.set(name, row);
+    });
+
+    // the doctors to list
+    const doctorFilter = { _id: { $in: [...byDoctor.keys()] } };
+    if (doctor) doctorFilter._id = byDoctor.has(String(doctor)) ? doctor : { $in: [] };
+    const allDocs = await Doctor.find(doctorFilter).populate("profile", "name");
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const rows = allDocs.map((doc) => {
+      const d = byDoctor.get(String(doc._id));
+      return {
+        _id: doc._id,
+        name: doc.name,
+        uniqueNumber: doc.uniqueNumber,
+        profileName: doc.profile?.name || "—",
+        isActive: doc.isActive,
+        isBudgeted: doc.isBudgeted,
+        createdAt: doc.createdAt,
+        totalPrescriptions: d.rx,
+        totalSaleBoxes: Math.round(d.boxes),
+        totalSalesAmount: r2(d.amount),
+        unknownLines: d.unknown,
+        drugBreakdown: [...d.drugs.values()]
+          .map((x) => ({ ...x, saleBoxes: Math.round(x.saleBoxes), salesAmount: r2(x.salesAmount) }))
+          .sort((a, b) => b.salesAmount - a.salesAmount || b.prescriptions - a.prescriptions),
+      };
+    }).sort((a, b) => b.totalSalesAmount - a.totalSalesAmount || b.totalPrescriptions - a.totalPrescriptions);
 
     const pageNum = Math.max(parseInt(page) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit) || 25, 1), 100);
-    const skip = (pageNum - 1) * limitNum;
+    const docs = rows.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
-    const [doctors, total, activeCount, budgetedCount, newlyAddedCount] = await Promise.all([
-      Doctor.find(doctorFilter).populate("profile", "name").sort({ firstName: 1 }).skip(skip).limit(limitNum),
-      Doctor.countDocuments(doctorFilter),
-      Doctor.countDocuments({ ...doctorFilter, isActive: true }),
-      Doctor.countDocuments({ ...doctorFilter, isBudgeted: true }),
-      Doctor.countDocuments({ ...doctorFilter, createdAt: { $gte: fromDate, $lte: toDate } }),
-    ]);
-
-    const docs = await Promise.all(
-      doctors.map(async (d) => {
-        const prescriptionFilter = {
-          doctor: d._id,
-          date: { $gte: fromDate, $lte: toDate },
-        };
-        if (scopedEmployeeIds) prescriptionFilter.employee = { $in: scopedEmployeeIds };
-
-        const prescriptions = await Prescription.find(prescriptionFilter).select("_id");
-        const items = await DrugPrescription.find({
-          prescription: { $in: prescriptions.map((p) => p._id) },
-        }).populate("drug", "name price");
-
-        let totalSalesAmount = 0;
-        let totalSaleBoxes = 0;
-        const byDrug = new Map();
-
-        items.forEach((it) => {
-          const price = it.drug?.price || 0;
-          const sold = it.saleBoxes || 0;
-          totalSalesAmount += sold * price;
-          totalSaleBoxes += sold;
-
-          const drugName = it.drug?.name || "—";
-          const entry = byDrug.get(drugName) || { drugName, saleBoxes: 0, salesAmount: 0 };
-          entry.saleBoxes += sold;
-          entry.salesAmount += sold * price;
-          byDrug.set(drugName, entry);
-        });
-
-        return {
-          _id: d._id,
-          name: d.name,
-          uniqueNumber: d.uniqueNumber,
-          profileName: d.profile?.name || "—",
-          isActive: d.isActive,
-          isBudgeted: d.isBudgeted,
-          createdAt: d.createdAt,
-          totalSalesAmount: Math.round(totalSalesAmount * 100) / 100,
-          totalSaleBoxes,
-          drugBreakdown: Array.from(byDrug.values())
-            .map((x) => ({
-              drugName: x.drugName,
-              saleBoxes: x.saleBoxes,
-              salesAmount: Math.round(x.salesAmount * 100) / 100,
-            }))
-            .sort((a, b) => b.salesAmount - a.salesAmount),
-        };
-      })
-    );
-
-    // total sales grouped by division, for this date range — used for
-    // the "revenue by division" pie chart. Independent of the doctor/
-    // division/group filters above (always shows the full picture).
-    const { default: Section } = await import("../../models/Section.js");
-    // only genuine "N DIVIZION" sections — excludes "Test Division" and any
-    // other non-numbered section that isn't a real division
+    // revenue by division = the REAL pharmacy sales of the division's reps (no estimate needed)
+    const priceById = new Map((await Drug.find({}).select("price")).map((x) => [String(x._id), x.price || 0]));
     const allSections = await Section.find({ name: /^\d\s*DIVIZION/i });
-    const divisionSummary = await Promise.all(
-      allSections.map(async (sec) => {
-        const divGroupIds = await Group.find({ section: sec._id }).distinct("_id");
-        const divEmployeeIds = await Employee.find({ group: { $in: divGroupIds } }).distinct("_id");
-        if (sec.head) divEmployeeIds.push(sec.head);
-        const divPrescriptions = await Prescription.find({
-          employee: { $in: divEmployeeIds },
-          date: { $gte: fromDate, $lte: toDate },
-        }).select("_id");
-        const divItems = await DrugPrescription.find({
-          prescription: { $in: divPrescriptions.map((p) => p._id) },
-        }).populate("drug", "price");
-        const total = divItems.reduce((s, it) => s + (it.saleBoxes || 0) * (it.drug?.price || 0), 0);
-        return {
-          divisionId: sec._id,
-          divisionName: sec.name,
-          totalSalesAmount: Math.round(total * 100) / 100,
-        };
-      })
-    );
+    const divisionSummary = await Promise.all(allSections.map(async (sec) => {
+      const gids = await Group.find({ section: sec._id }).distinct("_id");
+      const eids = (await Employee.find({ group: { $in: gids } }).distinct("_id")).map(String);
+      if (sec.head) eids.push(String(sec.head));
+      const set = new Set(eids);
+      const ds = await EmployeeSale.find({ employee: { $in: eids }, date: { $gte: new Date(monthFrom.getTime() - 12 * 3600e3), $lte: toDate } }).select("_id");
+      const dl = ds.length ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: ds.map((x) => x._id) } }).select("drug totalNoOfBoxes") : [];
+      const total = dl.reduce((s, l) => s + (l.totalNoOfBoxes || 0) * (priceById.get(String(l.drug)) || 0), 0);
+      return { divisionId: sec._id, divisionName: sec.name, totalSalesAmount: r2(total), employees: set.size };
+    }));
 
     res.json({
       docs,
-      total,
+      total: rows.length,
       page: pageNum,
-      pages: Math.max(Math.ceil(total / limitNum), 1),
+      pages: Math.max(Math.ceil(rows.length / limitNum), 1),
       limit: limitNum,
-      kpis: { newlyAddedCount, activeCount, budgetedCount },
+      kpis: {
+        newlyAddedCount: allDocs.filter((x) => x.createdAt >= fromDate && x.createdAt <= toDate).length,
+        activeCount: allDocs.filter((x) => x.isActive).length,
+        budgetedCount: allDocs.filter((x) => x.isBudgeted).length,
+      },
       divisionSummary,
+      estimated: true,
     });
   } catch (err) {
     console.error("getDoctorsReport failed:", err);
