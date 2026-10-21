@@ -39,6 +39,7 @@ import budgetsListRoutes from "./routes/budgetsList/budgetsList.routes.js";
 import employeeThemeRoutes from "./routes/employeeTheme/employeeTheme.routes.js";
 import devErrorsRoutes from "./routes/devErrors/devErrors.routes.js";
 import directorDashboardRoutes from "./routes/directorDashboard/directorDashboard.routes.js";
+import financeRoutes from "./routes/finance/finance.routes.js";
 import stocksRoutes from "./routes/stocks/stocks.routes.js";
 import {
   roleRoutes,
@@ -86,6 +87,7 @@ app.use(
   app.use("/api/employees/me/theme", employeeThemeRoutes);
   app.use("/api/dev/errors", devErrorsRoutes);
   app.use("/api/director-dashboard", requirePermission("director_dashboard"), directorDashboardRoutes);
+  app.use("/api/finance", financeRoutes);
   app.use("/api/stocks", requirePermission("stock_upload"), stocksRoutes);
   app.use("/api/employees", requirePermissionExceptRead("employees"), employeesRoutes);
   // role LIST is also readable with "employees" access (Employee form dropdown);
