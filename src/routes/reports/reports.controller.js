@@ -86,6 +86,24 @@ export async function getEfficiencyReport(req, res) {
   }
 }
 
+// employees of one division (its groups' members + the division head)
+async function divisionEmployeeIds(sectionId) {
+  const sec = await Section.findById(sectionId).select("head");
+  const gids = await Group.find({ section: sectionId }).distinct("_id");
+  const ids = (await Employee.find({ group: { $in: gids } }).distinct("_id")).map(String);
+  if (sec?.head) ids.push(String(sec.head));
+  return ids;
+}
+
+// GET /api/reports/reimbursement/divisions
+export async function getReimbursementDivisions(req, res) {
+  try {
+    res.json(await Section.find({ name: /DIVIZION/i }).sort({ name: 1 }).select("name"));
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 export async function getReimbursementReport(req, res) {
   try {
     const { from, to, employee } = req.query;
@@ -111,6 +129,17 @@ export async function getReimbursementReport(req, res) {
       }
     }
 
+    if (req.query.division) {
+      const dIds = new Set(await divisionEmployeeIds(req.query.division));
+      if (typeof filter.performer === "string" || filter.performer?._bsontype) {
+        if (!dIds.has(String(filter.performer))) filter.performer = { $in: [] };
+      } else if (filter.performer?.$in) {
+        filter.performer = { $in: filter.performer.$in.filter((id) => dIds.has(String(id))) };
+      } else {
+        filter.performer = { $in: [...dIds] };
+      }
+    }
+
     const plans = await PlanConfiguration.find(filter)
       .populate("performer", "firstName lastName")
       .populate({ path: "hospital", populate: "region" })
@@ -126,6 +155,7 @@ export async function getReimbursementReport(req, res) {
 
       seen.set(key, {
         date: plan.period,
+        employeeId: empId,
         employeeName:
           plan.performer?.name ||
           `${plan.performer?.firstName || ""} ${plan.performer?.lastName || ""}`.trim(),
