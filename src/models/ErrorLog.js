@@ -4,6 +4,17 @@ const errorLogSchema = new mongoose.Schema(
   {
     message: { type: String, required: true },
     read: { type: Boolean, default: false },
+    // context: who / where / what
+    employeeId: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    employeeName: String,
+    employeeRole: String,
+    page: String,       // page in the app, e.g. /ka/dashboard/plannings
+    action: String,     // e.g. "ვიზიტის დაგეგმვა"
+    method: String,
+    apiPath: String,
+    query: String,
+    bodyKeys: String,
+    hint: String,       // how to fix it
   },
   { timestamps: true }
 );

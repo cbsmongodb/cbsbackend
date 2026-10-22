@@ -1,4 +1,5 @@
 import express from "express";
+import { requestContext } from "./utils/requestContext.js";
 import cors from "cors";
 
 import { requirePermission, requirePermissionExceptRead, requireAnyPermission } from "./middleware/requirePermission.js";
@@ -79,6 +80,7 @@ app.use(
   // registered first so the default 100kb parser skips these requests
   app.use("/api/stocks", express.json({ limit: "15mb" }));
   app.use(express.json());
+  app.use(requestContext); // who / where / what for the error monitor
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
 
