@@ -35,10 +35,33 @@ planConfigurationSchema.index({ performer: 1, period: 1 });
 // Rails: generate_plan_number, sequential "PL1", "PL2", ...
 planConfigurationSchema.pre("save", async function (next) {
   if (this.planNumber) return next();
-  const last = await this.constructor.findOne().sort({ createdAt: -1 });
-  const lastNum = last?.planNumber ? parseInt(last.planNumber.replace("PL", ""), 10) : 0;
-  this.planNumber = `PL${lastNum + 1}`;
+  // next number = the HIGHEST existing "PL<n>" + 1 (imported visits have no number,
+  // so "the last created one" is not a safe base)
+  const [top] = await this.constructor.aggregate([
+    { $match: { planNumber: /^PL\d+$/ } },
+    { $project: { n: { $toInt: { $substrCP: ["$planNumber", 2, 12] } } } },
+    { $sort: { n: -1 } },
+    { $limit: 1 },
+  ]);
+  this.planNumber = `PL${(top?.n || 0) + 1}`;
   next();
 });
+
+// planNumberRetry: if two plans got the same number at the same moment, take the next one
+const originalSave = mongoose.Model.prototype.save;
+planConfigurationSchema.methods.save = async function (...args) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      return await originalSave.apply(this, args);
+    } catch (err) {
+      if (err?.code === 11000 && err?.keyPattern?.planNumber && this.isNew) {
+        this.planNumber = undefined;
+        continue;
+      }
+      throw err;
+    }
+  }
+  return originalSave.apply(this, args);
+};
 
 export default mongoose.model("PlanConfiguration", planConfigurationSchema);
