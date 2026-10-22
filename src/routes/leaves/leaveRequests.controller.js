@@ -2,10 +2,24 @@ import LeaveEntry from "../../models/LeaveEntry.js";
 import LeaveBalance from "../../models/LeaveBalance.js";
 import RestDay from "../../models/RestDay.js";
 import Employee from "../../models/Employee.js";
+import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 // who can approve / reject and see the archive
-const APPROVER_ROLES = new Set(["admin", "director"]);
+const APPROVER_ROLES = new Set(["admin", "director", "division manager"]);
 export const canApprove = (emp) => APPROVER_ROLES.has((emp?.role?.name || "").toLowerCase().trim());
+
+// admin / director decide for everyone; a division manager only for his own people, never for himself
+const GLOBAL_APPROVERS = new Set(["admin", "director"]);
+async function approverScope(emp) {
+  if (GLOBAL_APPROVERS.has((emp?.role?.name || "").toLowerCase().trim())) return null;
+  const ids = (await getScopeEmployeeIds(emp)) || [];
+  return ids.filter((id) => String(id) !== String(emp._id));
+}
+async function inScope(emp, employeeId) {
+  if (!canApprove(emp)) return false;
+  const scope = await approverScope(emp);
+  return !scope || scope.map(String).includes(String(employeeId?._id || employeeId));
+}
 
 const TYPES = ["paid", "unpaid", "sick"];
 const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
@@ -133,7 +147,7 @@ export async function cancelRequest(req, res) {
     const e = await LeaveEntry.findById(req.params.id);
     if (!e) return res.status(404).json({ error: "Not found" });
     const own = String(e.employee) === String(req.employee._id);
-    if (!canApprove(req.employee) && !(own && e.status === "pending")) return res.status(403).json({ error: "Not allowed" });
+    if (!(own && e.status === "pending") && !(await inScope(req.employee, e.employee))) return res.status(403).json({ error: "Not allowed" });
     e.status = "canceled";
     e.decidedBy = req.employee._id;
     e.decidedAt = new Date();
@@ -149,7 +163,10 @@ export async function cancelRequest(req, res) {
 export async function getPending(req, res) {
   try {
     if (!canApprove(req.employee)) return res.status(403).json({ error: "Not allowed" });
-    const rows = await populate(LeaveEntry.find({ status: "pending" }).sort({ createdAt: 1 }));
+    const scope = await approverScope(req.employee);
+    const pf = { status: "pending" };
+    if (scope) pf.employee = { $in: scope };
+    const rows = await populate(LeaveEntry.find(pf).sort({ createdAt: 1 }));
     const out = [];
     for (const r of rows) {
       const year = new Date(r.startDate).getUTCFullYear();
@@ -167,6 +184,7 @@ async function decide(req, res, status) {
     if (!canApprove(req.employee)) return res.status(403).json({ error: "Not allowed" });
     const e = await LeaveEntry.findById(req.params.id);
     if (!e) return res.status(404).json({ error: "Not found" });
+    if (!(await inScope(req.employee, e.employee))) return res.status(403).json({ error: "Not allowed" });
     if (e.status !== "pending") return res.status(400).json({ error: "Already decided" });
     if (status === "approved") {
       const year = new Date(e.startDate).getUTCFullYear();
@@ -196,10 +214,13 @@ export async function getArchive(req, res) {
     if (!canApprove(req.employee)) return res.status(403).json({ error: "Not allowed" });
     const year = Number(req.query.year) || new Date().getUTCFullYear();
     const [from, to] = yearRange(year);
-    const requests = await populate(LeaveEntry.find({ startDate: { $gte: from, $lte: to } }).sort({ startDate: -1 }));
+    const scope = await approverScope(req.employee);
+    const rf = { startDate: { $gte: from, $lte: to } };
+    if (scope) rf.employee = { $in: scope };
+    const requests = await populate(LeaveEntry.find(rf).sort({ startDate: -1 }));
     const balances = new Map((await LeaveBalance.find({ year })).map((b) => [String(b.employee), b.paidDaysTotal]));
     const people = new Map();
-    const employees = await Employee.find({ isActive: { $ne: false } }).select("firstName lastName");
+    const employees = await Employee.find({ isActive: { $ne: false }, ...(scope ? { _id: { $in: scope } } : {}) }).select("firstName lastName");
     employees.forEach((e) => people.set(String(e._id), {
       employee: { _id: e._id, firstName: e.firstName, lastName: e.lastName },
       paidTotal: balances.get(String(e._id)) ?? 24,
