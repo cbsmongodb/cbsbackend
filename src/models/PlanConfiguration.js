@@ -47,21 +47,4 @@ planConfigurationSchema.pre("save", async function (next) {
   next();
 });
 
-// planNumberRetry: if two plans got the same number at the same moment, take the next one
-const originalSave = mongoose.Model.prototype.save;
-planConfigurationSchema.methods.save = async function (...args) {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      return await originalSave.apply(this, args);
-    } catch (err) {
-      if (err?.code === 11000 && err?.keyPattern?.planNumber && this.isNew) {
-        this.planNumber = undefined;
-        continue;
-      }
-      throw err;
-    }
-  }
-  return originalSave.apply(this, args);
-};
-
 export default mongoose.model("PlanConfiguration", planConfigurationSchema);
