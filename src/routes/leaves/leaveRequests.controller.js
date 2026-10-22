@@ -10,8 +10,12 @@ export const canApprove = (emp) => APPROVER_ROLES.has((emp?.role?.name || "").to
 
 // admin / director decide for everyone; a division manager only for his own people, never for himself
 const GLOBAL_APPROVERS = new Set(["admin", "director"]);
+// can SEE every request and the archive, but not approve / reject
+const VIEWER_ROLES = new Set(["finance manager"]);
+export const canView = (emp) => canApprove(emp) || VIEWER_ROLES.has((emp?.role?.name || "").toLowerCase().trim());
 async function approverScope(emp) {
-  if (GLOBAL_APPROVERS.has((emp?.role?.name || "").toLowerCase().trim())) return null;
+  const roleName = (emp?.role?.name || "").toLowerCase().trim();
+  if (GLOBAL_APPROVERS.has(roleName) || VIEWER_ROLES.has(roleName)) return null;
   const ids = (await getScopeEmployeeIds(emp)) || [];
   return ids.filter((id) => String(id) !== String(emp._id));
 }
@@ -61,7 +65,7 @@ export async function getMine(req, res) {
     const year = Number(req.query.year) || new Date().getUTCFullYear();
     const [from, to] = yearRange(year);
     const requests = await populate(LeaveEntry.find({ employee: req.employee._id, startDate: { $gte: from, $lte: to } }).sort({ startDate: -1 }));
-    res.json({ summary: await summaryFor(req.employee._id, year), requests, canApprove: canApprove(req.employee) });
+    res.json({ summary: await summaryFor(req.employee._id, year), requests, canApprove: canApprove(req.employee), canView: canView(req.employee) });
   } catch (err) {
     console.error("leave getMine failed:", err);
     res.status(500).json({ error: "Server error" });
@@ -162,7 +166,7 @@ export async function cancelRequest(req, res) {
 // GET /api/leave-requests/pending  (approvers)
 export async function getPending(req, res) {
   try {
-    if (!canApprove(req.employee)) return res.status(403).json({ error: "Not allowed" });
+    if (!canView(req.employee)) return res.status(403).json({ error: "Not allowed" });
     const scope = await approverScope(req.employee);
     const pf = { status: "pending" };
     if (scope) pf.employee = { $in: scope };
@@ -211,7 +215,7 @@ export const rejectRequest = (req, res) => decide(req, res, "rejected");
 // GET /api/leave-requests/archive?year=  (approvers): per person totals + every request
 export async function getArchive(req, res) {
   try {
-    if (!canApprove(req.employee)) return res.status(403).json({ error: "Not allowed" });
+    if (!canView(req.employee)) return res.status(403).json({ error: "Not allowed" });
     const year = Number(req.query.year) || new Date().getUTCFullYear();
     const [from, to] = yearRange(year);
     const scope = await approverScope(req.employee);
