@@ -43,7 +43,8 @@ export async function getProductSale(req, res) {
     let rows = Array.from(byDrug.values()).map((r) => ({
       ...r,
       totalSaleAmount: Math.round(r.totalSaleAmount * 100) / 100,
-      closingStocks: r.openingStocks - r.saleBoxes,
+      openingStocks: Math.round((r.openingStocks || 0) * 100) / 100,
+      closingStocks: Math.round(((r.openingStocks || 0) - (r.saleBoxes || 0)) * 100) / 100,
     }));
     rows.sort((a, b) => b.totalSaleAmount - a.totalSaleAmount);
 
