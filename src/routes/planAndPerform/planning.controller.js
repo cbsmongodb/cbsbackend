@@ -16,6 +16,16 @@ const isOwnPlan = (plan, emp) => String(plan.performer) === String(emp._id);
 
 const POPULATE = "employee hospital pharmacy author performer";
 
+// list view only needs a few fields — full Employee docs (incl. password hash) were being sent
+const EMP_FIELDS = "firstName lastName employeeType isActive";
+const LIST_POPULATE = [
+  { path: "employee", select: EMP_FIELDS },
+  { path: "author", select: EMP_FIELDS },
+  { path: "performer", select: EMP_FIELDS },
+  { path: "hospital", select: "name lat lng" },
+  { path: "pharmacy", select: "pharmacyName lat lng" },
+];
+
 export async function getAllPlannings(req, res) {
   try {
     const filter = {};
@@ -37,12 +47,16 @@ export async function getAllPlannings(req, res) {
       }
     }
 
-    const plans = await PlanConfiguration.find(filter).populate(POPULATE).sort({ period: -1 });
+    const limit = Math.min(Number(req.query.limit) || 0, 5000);
+    let query = PlanConfiguration.find(filter).populate(LIST_POPULATE).sort({ period: -1 }).lean();
+    if (limit > 0) query = query.limit(limit);
+    const plans = await query;
 
     const planIds = plans.map((p) => p._id);
-    const pcds = await PlanConfigurationDoctor.find({ planConfiguration: { $in: planIds } }).populate(
-      "doctor"
-    );
+    const pcds = await PlanConfigurationDoctor.find({ planConfiguration: { $in: planIds } })
+      .select("planConfiguration doctor")
+      .populate({ path: "doctor", select: "firstName lastName" })
+      .lean();
     const doctorsByPlan = new Map();
     pcds.forEach((pcd) => {
       const key = String(pcd.planConfiguration);
@@ -51,7 +65,7 @@ export async function getAllPlannings(req, res) {
     });
 
     const withDoctors = plans.map((plan) => ({
-      ...plan.toObject(),
+      ...plan,
       doctors: doctorsByPlan.get(String(plan._id)) || [],
     }));
 

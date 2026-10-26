@@ -10,4 +10,6 @@ const planConfigurationDoctorSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+planConfigurationDoctorSchema.index({ planConfiguration: 1 });
+
 export default mongoose.model("PlanConfigurationDoctor", planConfigurationDoctorSchema);

@@ -31,6 +31,7 @@ const planConfigurationSchema = new mongoose.Schema(
 );
 
 planConfigurationSchema.index({ performer: 1, period: 1 });
+planConfigurationSchema.index({ period: -1 });
 
 // Rails: generate_plan_number, sequential "PL1", "PL2", ...
 planConfigurationSchema.pre("save", async function (next) {
