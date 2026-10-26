@@ -482,7 +482,17 @@ export async function getMyStatus(req, res) {
     const latest = records[0];
     const nextAction = latest?.attendanceType === "checkin" ? "checkout" : "checkin";
 
-    res.json({ nextAction });
+    // times for the status card: when they checked in, and (if done) when they checked out
+    let checkinTime = null;
+    let checkoutTime = null;
+    if (latest?.attendanceType === "checkin") {
+      checkinTime = latest.attendanceTime;
+    } else if (latest?.attendanceType === "checkout") {
+      checkoutTime = latest.attendanceTime;
+      checkinTime = records.find((r) => r.attendanceType === "checkin")?.attendanceTime || null;
+    }
+
+    res.json({ nextAction, checkinTime, checkoutTime });
   } catch (err) {
     console.error("getMyStatus failed:", err);
     res.status(500).json({ error: "Server error" });
