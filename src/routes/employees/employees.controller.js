@@ -19,6 +19,12 @@ function sanitizeRefFields(body) {
 }
 
 const POPULATE = "role designation group";
+// lists only need the role's NAME — not its whole privileges map for every row
+const LIST_POPULATE = [
+  { path: "role", select: "name" },
+  { path: "designation" },
+  { path: "group", select: "name section region head isActive" },
+];
 
 export async function getAllEmployees(req, res) {
   try {
@@ -56,7 +62,7 @@ export async function getAllEmployees(req, res) {
     }
 
     if (!page && !limit) {
-      const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).lean();
+      const employees = await Employee.find(filter).populate(LIST_POPULATE).sort({ firstName: 1 }).lean();
       return res.json(employees);
     }
 
@@ -65,7 +71,7 @@ export async function getAllEmployees(req, res) {
     const skip = (pageNum - 1) * limitNum;
 
     const [docs, total] = await Promise.all([
-      Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum).lean(),
+      Employee.find(filter).populate(LIST_POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum).lean(),
       Employee.countDocuments(filter),
     ]);
 
