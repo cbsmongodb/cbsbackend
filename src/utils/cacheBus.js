@@ -43,7 +43,9 @@ export function createCache(ttlMs, maxEntries = 2000) {
     const hit = store.get(key);
     if (hit && hit.ver === version && now - hit.at < ttlMs) return hit.value;
     const ver = version;
-    const value = load();
+    // wrap in a real Promise: a Mongoose Query is only a thenable and can be
+    // executed ONCE — awaiting the same Query from a 2nd request throws
+    const value = Promise.resolve().then(load);
     if (store.size >= maxEntries) store.clear();
     store.set(key, { at: now, ver, value });
     try {
