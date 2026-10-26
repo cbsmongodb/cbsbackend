@@ -31,6 +31,7 @@ export async function getAllPlannings(req, res) {
     const filter = {};
     if (req.query.performer) filter.performer = req.query.performer;
     if (req.query.status) filter.status = req.query.status;
+    if (req.query.planType) filter.planType = req.query.planType;
     if (req.query.period_from || req.query.period_to) {
       filter.period = {};
       if (req.query.period_from) filter.period.$gte = new Date(req.query.period_from);
@@ -47,10 +48,46 @@ export async function getAllPlannings(req, res) {
       }
     }
 
-    const limit = Math.min(Number(req.query.limit) || 0, 5000);
-    let query = PlanConfiguration.find(filter).populate(LIST_POPULATE).sort({ period: -1 }).lean();
-    if (limit > 0) query = query.limit(limit);
-    const plans = await query;
+    // free-text search: hospital / pharmacy name or performer's name
+    const search = String(req.query.search || "").trim();
+    if (search) {
+      const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const { default: Pharmacy } = await import("../../models/Pharmacy.js");
+      const { default: Employee } = await import("../../models/Employee.js");
+      const [hospitalIds, pharmacyIds, employeeIds] = await Promise.all([
+        Hospital.find({ name: rx }).distinct("_id"),
+        Pharmacy.find({ pharmacyName: rx }).distinct("_id"),
+        Employee.find({ $or: [{ firstName: rx }, { lastName: rx }] }).distinct("_id"),
+      ]);
+      filter.$or = [
+        { hospital: { $in: hospitalIds } },
+        { pharmacy: { $in: pharmacyIds } },
+        { performer: { $in: employeeIds } },
+      ];
+    }
+
+    // ?page= -> paginated { docs, total, page, pages, limit } (the Plannings page);
+    // without it -> plain array as before (Today's visits, Field Team Status...)
+    const paginated = req.query.page !== undefined;
+    let plans, total, pageNum, limitNum;
+    if (paginated) {
+      pageNum = Math.max(parseInt(req.query.page) || 1, 1);
+      limitNum = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 250);
+      [plans, total] = await Promise.all([
+        PlanConfiguration.find(filter)
+          .populate(LIST_POPULATE)
+          .sort({ period: -1, _id: -1 })
+          .skip((pageNum - 1) * limitNum)
+          .limit(limitNum)
+          .lean(),
+        PlanConfiguration.countDocuments(filter),
+      ]);
+    } else {
+      const limit = Math.min(Number(req.query.limit) || 0, 5000);
+      let query = PlanConfiguration.find(filter).populate(LIST_POPULATE).sort({ period: -1 }).lean();
+      if (limit > 0) query = query.limit(limit);
+      plans = await query;
+    }
 
     const planIds = plans.map((p) => p._id);
     const pcds = await PlanConfigurationDoctor.find({ planConfiguration: { $in: planIds } })
@@ -69,6 +106,15 @@ export async function getAllPlannings(req, res) {
       doctors: doctorsByPlan.get(String(plan._id)) || [],
     }));
 
+    if (paginated) {
+      return res.json({
+        docs: withDoctors,
+        total,
+        page: pageNum,
+        pages: Math.max(Math.ceil(total / limitNum), 1),
+        limit: limitNum,
+      });
+    }
     res.json(withDoctors);
   } catch (err) {
     console.error("getAllPlannings failed:", err);
