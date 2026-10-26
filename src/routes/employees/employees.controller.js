@@ -4,6 +4,7 @@ import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
 import Group from "../../models/Group.js";
 import { getVisibleEmployeeIds, seesEverything } from "../../utils/groupVisibility.js";
+import { bumpCacheVersion } from "../../utils/cacheBus.js";
 
 // optional ObjectId-ref fields (group) arrive as "" from an
 // unselected <select> — Mongoose can't cast an empty string to ObjectId,
@@ -149,13 +150,28 @@ export async function bulkImportEmployees(req, res) {
       return res.status(400).json({ error: "rows must be a non-empty array" });
     }
 
-    const roleCache = new Map();
-    const designationCache = new Map();
+    // everything the import needs, loaded ONCE (roles / designations are tiny lists)
+    // instead of 2-4 database round trips per row
+    const emails = [...new Set(rows.map((r) => (r.email || "").trim().toLowerCase()).filter(Boolean))];
+    const [roles, designations, existingList] = await Promise.all([
+      Role.find().select("_id name").lean(),
+      Designation.find().select("_id position").lean(),
+      Employee.find({ email: { $in: emails } }).select("_id email").lean(),
+    ]);
+    const roleByName = new Map(roles.map((r) => [String(r.name || "").toLowerCase(), r._id]));
+    const designationByName = new Map(designations.map((d) => [String(d.position || "").toLowerCase(), d._id]));
+    const existingByEmail = new Map(existingList.map((e) => [e.email, e._id]));
+
+    // the default password is the same for everyone -> hash it once, not per row
+    // (bcrypt is deliberately slow: ~0.1s of CPU each time)
+    let defaultHash = null;
 
     let created = 0;
     let updated = 0;
     let failed = 0;
     const failedRows = [];
+    const updates = new Map(); // existing employee id -> $set
+    const inserts = new Map(); // email -> new employee doc (same email twice -> later row wins, like before)
 
     for (const row of rows) {
       const name = (row.name || "").trim();
@@ -170,64 +186,53 @@ export async function bulkImportEmployees(req, res) {
       const firstName = nameParts[0] || name;
       const lastName = nameParts.slice(1).join(" ");
 
-      let roleId = null;
       const roleKey = designationName.toLowerCase();
-      if (roleCache.has(roleKey)) {
-        roleId = roleCache.get(roleKey);
-      } else {
-        const escaped = designationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const role = await Role.findOne({ name: new RegExp(`^${escaped}$`, "i") });
-        if (role) {
-          roleId = role._id;
-          roleCache.set(roleKey, roleId);
-        }
-      }
-
+      const roleId = roleByName.get(roleKey) || null;
       if (!roleId) {
         failed++;
         failedRows.push({ name, reason: `No matching role found: "${designationName}"` });
         continue;
       }
+      const designationId = designationByName.get(roleKey) || null;
 
-      let designationId = null;
-      if (designationCache.has(roleKey)) {
-        designationId = designationCache.get(roleKey);
-      } else {
-        const escaped = designationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const designation = await Designation.findOne({ position: new RegExp(`^${escaped}$`, "i") });
-        if (designation) {
-          designationId = designation._id;
-          designationCache.set(roleKey, designationId);
-        }
+      const existingId = existingByEmail.get(email);
+      if (existingId) {
+        const set = { firstName, lastName, phoneNumber, role: roleId, isActive: status === "active" };
+        if (designationId) set.designation = designationId;
+        updates.set(String(existingId), { ...(updates.get(String(existingId)) || {}), ...set });
+        updated++;
+        continue;
       }
-
-      const existing = await Employee.findOne({ email });
-      if (existing) {
-        existing.firstName = firstName;
-        existing.lastName = lastName;
-        existing.phoneNumber = phoneNumber;
-        existing.role = roleId;
-        if (designationId) existing.designation = designationId;
-        existing.isActive = status === "active";
-        await existing.save();
+      if (inserts.has(email)) {
+        // same new email again in this paste -> update the pending new employee
+        const doc = inserts.get(email);
+        Object.assign(doc, { firstName, lastName, phoneNumber, role: roleId, isActive: status === "active" });
+        if (designationId) doc.designation = designationId;
         updated++;
         continue;
       }
 
-      const hashed = await bcrypt.hash("123456", 10);
-
-      await Employee.create({
+      if (!defaultHash) defaultHash = await bcrypt.hash("123456", 10);
+      inserts.set(email, {
         firstName,
         lastName,
         email,
         phoneNumber,
-        password: hashed,
+        password: defaultHash,
         role: roleId,
         designation: designationId,
         isActive: status === "active",
       });
       created++;
     }
+
+    if (updates.size) {
+      await Employee.bulkWrite(
+        [...updates].map(([id, set]) => ({ updateOne: { filter: { _id: id }, update: { $set: set } } }))
+      );
+    }
+    if (inserts.size) await Employee.insertMany([...inserts.values()]);
+    bumpCacheVersion(); // bulkWrite skips middleware -> clear auth / visibility caches ourselves
 
     res.json({ created, updated, failed, failedRows });
   } catch (err) {
