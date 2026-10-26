@@ -106,8 +106,11 @@ app.use(
     roleRoutes
   );
   app.use("/api/admin/designations", requirePermission("designations"), designationRoutes);
-  app.use("/api/admin/sections", requirePermission("sections"), sectionRoutes);
-  app.use("/api/admin/groups", requirePermission("groups"), groupRoutes);
+  // reading the division / group LIST is open to every logged-in user (filter
+  // dropdowns on Budgets, Analytics...); managers still only get their own
+  // (adminScope inside the router), and every change still needs the permission
+  app.use("/api/admin/sections", requirePermissionExceptRead("sections"), sectionRoutes);
+  app.use("/api/admin/groups", requirePermissionExceptRead("groups"), groupRoutes);
   app.use("/api/admin/regions", requirePermission("regions"), regionRoutes);
 
   app.use("/api/doctors", requirePermissionExceptRead("doctors"), doctorsRoutes);
