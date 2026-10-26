@@ -40,6 +40,11 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
     .populate("drug", "name price bonus")
     .lean();
 
+  return statsFromItems(items);
+}
+
+// the same numbers getPrescriptionStats returns, from already-loaded drug lines
+function statsFromItems(items) {
   let prescriptionAmount = 0;
   let prescriptionBoxes = 0;
   let salesAmount = 0;
@@ -97,6 +102,121 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
     payableAmount: Math.round(payableAmount * 100) / 100,
     drugBreakdown,
   };
+}
+
+// prescription / sales / payable stats + budget paid / delta for MANY
+// doctor+employee pairs at once (4 queries instead of ~3 per pair)
+async function batchPairStats(pairs, fromDate, toDate) {
+  const doctorIds = [...new Set(pairs.map((p) => p.doctor).filter(Boolean).map(String))];
+  const employeeIds = [...new Set(pairs.map((p) => p.employee).filter(Boolean).map(String))];
+  const result = new Map();
+  if (!doctorIds.length || !employeeIds.length) return result;
+
+  const prescriptions = await Prescription.find({
+    doctor: { $in: doctorIds },
+    employee: { $in: employeeIds },
+    date: { $gte: fromDate, $lte: toDate },
+  })
+    .select("_id doctor employee")
+    .lean();
+  const pairOfRx = new Map(prescriptions.map((p) => [String(p._id), `${p.doctor}_${p.employee}`]));
+
+  const [items, budgets] = await Promise.all([
+    prescriptions.length
+      ? DrugPrescription.find({ prescription: { $in: prescriptions.map((p) => p._id) } })
+          .select("prescription drug totalNoOfBoxes saleBoxes")
+          .populate("drug", "name price bonus")
+          .lean()
+      : [],
+    Budget.aggregate([
+      {
+        $match: {
+          doctor: { $in: doctorIds.map((id) => new Budget.base.Types.ObjectId(id)) },
+          employee: { $in: employeeIds.map((id) => new Budget.base.Types.ObjectId(id)) },
+          date: { $gte: fromDate, $lte: toDate },
+        },
+      },
+      {
+        $group: {
+          _id: { doctor: "$doctor", employee: "$employee" },
+          paid: { $sum: "$paidAmount" },
+          delta: { $sum: "$advanceAmount" },
+        },
+      },
+    ]),
+  ]);
+
+  const itemsByPair = new Map();
+  items.forEach((it) => {
+    const key = pairOfRx.get(String(it.prescription));
+    if (!key) return;
+    if (!itemsByPair.has(key)) itemsByPair.set(key, []);
+    itemsByPair.get(key).push(it);
+  });
+  const budgetByPair = new Map(budgets.map((b) => [`${b._id.doctor}_${b._id.employee}`, b]));
+
+  pairs.forEach((p) => {
+    const key = `${p.doctor}_${p.employee}`;
+    if (result.has(key)) return;
+    const b = budgetByPair.get(key);
+    result.set(key, {
+      ...statsFromItems(itemsByPair.get(key) || []),
+      paidAmount: Math.round((b?.paid || 0) * 100) / 100,
+      deltaAmount: Math.round((b?.delta || 0) * 100) / 100,
+    });
+  });
+  return result;
+}
+
+// completed-visit counts per row (row's own month, its employee + doctor) for
+// all rows at once — instead of 2 queries per row
+async function batchVisits(docs) {
+  const visits = new Map();
+  const withRefs = docs.filter((d) => d.doctor?._id && d.employee?._id && d.date);
+  if (!withRefs.length) return visits;
+  const monthRange = (date) => [
+    new Date(date.getFullYear(), date.getMonth(), 1),
+    new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999),
+  ];
+  const ranges = withRefs.map((d) => monthRange(new Date(d.date)));
+  const minStart = new Date(Math.min(...ranges.map((r) => r[0].getTime())));
+  const maxEnd = new Date(Math.max(...ranges.map((r) => r[1].getTime())));
+
+  const plans = await PlanConfiguration.find({
+    performer: { $in: [...new Set(withRefs.map((d) => String(d.employee._id)))] },
+    period: { $gte: minStart, $lte: maxEnd },
+    status: "completed",
+  })
+    .select("_id performer period")
+    .lean();
+  if (!plans.length) return visits;
+
+  const counts = await PlanConfigurationDoctor.aggregate([
+    {
+      $match: {
+        planConfiguration: { $in: plans.map((p) => p._id) },
+        doctor: { $in: [...new Set(withRefs.map((d) => String(d.doctor._id)))].map((id) => new PlanConfigurationDoctor.base.Types.ObjectId(id)) },
+      },
+    },
+    { $group: { _id: { plan: "$planConfiguration", doctor: "$doctor" }, n: { $sum: 1 } } },
+  ]);
+  const countByPlanDoctor = new Map(counts.map((c) => [`${c._id.plan}_${c._id.doctor}`, c.n]));
+  const plansByEmployee = new Map();
+  plans.forEach((p) => {
+    const k = String(p.performer);
+    if (!plansByEmployee.has(k)) plansByEmployee.set(k, []);
+    plansByEmployee.get(k).push(p);
+  });
+
+  withRefs.forEach((d, i) => {
+    const [start, end] = ranges[i];
+    let n = 0;
+    (plansByEmployee.get(String(d.employee._id)) || []).forEach((p) => {
+      if (p.period >= start && p.period <= end) n += countByPlanDoctor.get(`${p._id}_${d.doctor._id}`) || 0;
+    });
+    visits.set(String(d._id), n);
+  });
+  return visits;
 }
 
 // GET /api/analytics?fromDate=&toDate=&doctor=&employee=&section=&group=&search=&page=&limit=
@@ -164,74 +284,33 @@ export async function getAnalytics(req, res) {
       targetByRow.set(key, entry);
     });
 
-    // cache prescription/sales/payable stats + budget paid/delta per
-    // doctor+employee pair, since Rails recomputes these using the global
-    // from/to filter (not each row's own month) — same pair repeats often
-    const pairCache = new Map();
+    // stats per doctor+employee pair use the global from/to filter (like Rails);
+    // visits use each row's own month — both computed for all rows at once
+    const [pairStats, visitsByRow] = await Promise.all([
+      batchPairStats(
+        docs.map((d) => ({ doctor: d.doctor?._id, employee: d.employee?._id })),
+        fromDate,
+        toDate
+      ),
+      batchVisits(docs),
+    ]);
+    const emptyStats = statsFromItems([]);
 
-    const rows = await Promise.all(
-      docs.map(async (d) => {
-        const pairKey = `${d.doctor?._id}_${d.employee?._id}`;
-        let pairPromise = pairCache.get(pairKey);
-        if (!pairPromise) {
-          pairPromise = (async () => {
-          const [prescStats, budgetAgg] = await Promise.all([
-            getPrescriptionStats(d.doctor?._id, d.employee?._id, fromDate, toDate),
-            Budget.aggregate([
-              {
-                $match: {
-                  doctor: d.doctor?._id,
-                  employee: d.employee?._id,
-                  date: { $gte: fromDate, $lte: toDate },
-                },
-              },
-              {
-                $group: {
-                  _id: null,
-                  paid: { $sum: "$paidAmount" },
-                  delta: { $sum: "$advanceAmount" },
-                },
-              },
-            ]),
-          ]);
-          return {
-            ...prescStats,
-            paidAmount: Math.round((budgetAgg[0]?.paid || 0) * 100) / 100,
-            deltaAmount: Math.round((budgetAgg[0]?.delta || 0) * 100) / 100,
-          };
-          })();
-          pairCache.set(pairKey, pairPromise);
-        }
-        const pairStats = await pairPromise;
-
-        // visits — scoped to THIS row's own month, unlike the pair stats above
-        const monthStart = new Date(d.date.getFullYear(), d.date.getMonth(), 1);
-        const monthEnd = new Date(d.date.getFullYear(), d.date.getMonth() + 1, 0, 23, 59, 59, 999);
-        const planIds = await PlanConfiguration.find({
-          performer: d.employee?._id,
-          period: { $gte: monthStart, $lte: monthEnd },
-          status: "completed",
-        }).distinct("_id");
-        const visits = await PlanConfigurationDoctor.countDocuments({
-          planConfiguration: { $in: planIds },
-          doctor: d.doctor?._id,
-        });
-
-        const targetEntry = targetByRow.get(String(d._id)) || { amount: 0, boxes: 0 };
-
-        return {
-          _id: d._id,
-          date: d.date,
-          employeeName: d.employee?.name || "—",
-          doctorName: d.doctor?.name || "—",
-          doctorIsBudgeted: !!d.doctor?.isBudgeted,
-          visits,
-          targetAmount: Math.round(targetEntry.amount * 100) / 100,
-          targetBoxes: targetEntry.boxes,
-          ...pairStats,
-        };
-      })
-    );
+    const rows = docs.map((d) => {
+      const targetEntry = targetByRow.get(String(d._id)) || { amount: 0, boxes: 0 };
+      const stats = pairStats.get(`${d.doctor?._id}_${d.employee?._id}`) || { ...emptyStats, paidAmount: 0, deltaAmount: 0 };
+      return {
+        _id: d._id,
+        date: d.date,
+        employeeName: d.employee?.name || "—",
+        doctorName: d.doctor?.name || "—",
+        doctorIsBudgeted: !!d.doctor?.isBudgeted,
+        visits: visitsByRow.get(String(d._id)) || 0,
+        targetAmount: Math.round(targetEntry.amount * 100) / 100,
+        targetBoxes: targetEntry.boxes,
+        ...stats,
+      };
+    });
 
     res.json({
       docs: rows,
