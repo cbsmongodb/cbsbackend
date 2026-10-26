@@ -33,13 +33,16 @@ const roleC = crud(Role);
 // batch employee-count per role, used on the roles list page
 roleRouter.get("/employee-counts", async (req, res) => {
   try {
-    const roles = await Role.find().select("_id");
+    // ONE grouped count instead of one count query per role
+    const [roles, grouped] = await Promise.all([
+      Role.find().select("_id").lean(),
+      Employee.aggregate([{ $group: { _id: "$role", n: { $sum: 1 } } }]),
+    ]);
+    const byRole = new Map(grouped.map((g) => [String(g._id), g.n]));
     const counts = {};
-    await Promise.all(
-      roles.map(async (r) => {
-        counts[r._id] = await Employee.countDocuments({ role: r._id });
-      })
-    );
+    roles.forEach((r) => {
+      counts[r._id] = byRole.get(String(r._id)) || 0;
+    });
     res.json(counts);
   } catch (err) {
     console.error("role employee-counts failed:", err);
@@ -56,7 +59,8 @@ roleRouter.get("/:id/employees", async (req, res) => {
   try {
     const employees = await Employee.find({ role: req.params.id })
       .select("firstName lastName email")
-      .sort({ firstName: 1 });
+      .sort({ firstName: 1 })
+      .lean();
     res.json(employees);
   } catch (err) {
     console.error("role employees list failed:", err);
