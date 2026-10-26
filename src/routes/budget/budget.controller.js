@@ -106,7 +106,7 @@ export async function getBudgetAllotment(req, res) {
 
     // only people this user may see (division / group managers -> their own people)
     const scope = await getScopeEmployeeIds(req.employee);
-    if (scope && !scope.map(String).includes(String(employeeId))) {
+    if (scope && !scope.some((id) => String(id) === String(employeeId))) {
       return res.status(403).json({ error: "Not allowed" });
     }
 
@@ -123,21 +123,40 @@ export async function getBudgetAllotment(req, res) {
 
     const filter = { employee: employeeId, date: { $gte: startDate, $lte: endDate } };
 
-    const [docs, employee] = await Promise.all([
-      Budget.find(filter).populate("doctor", "firstName lastName uniqueNumber").sort({ date: -1 }).lean(),
-      Employee.findById(employeeId).select("firstName lastName").lean(),
-    ]);
-
-    const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
-
     // allotmentFromDataEntry: target / sales / prescriptions come from Data Entry
     // (DoctorEntryItem, monthly) - the same numbers the reports and Data Entry page show
     const sd = new Date(startDate.getTime() + 4 * 3600e3); // Georgian calendar date
     const monthFrom = new Date(Date.UTC(sd.getUTCFullYear(), sd.getUTCMonth(), 1));
-    const entries = await DoctorEntryItem.find({
-      employee: employeeId,
-      period: { $gte: monthFrom, $lte: endDate },
-    }).populate("drug", "price").lean();
+
+    // independent queries -> all at the same time
+    const [docs, employee, entries, chartData] = await Promise.all([
+      Budget.find(filter)
+        .select("date doctor paidAmount advanceAmount salesAmount targetAmount prescriptionAmt isActive")
+        .populate("doctor", "firstName lastName uniqueNumber")
+        .sort({ date: -1 })
+        .lean(),
+      Employee.findById(employeeId).select("firstName lastName").lean(),
+      DoctorEntryItem.find({ employee: employeeId, period: { $gte: monthFrom, $lte: endDate } })
+        .select("drug prescription sale quota")
+        .populate("drug", "price")
+        .lean(),
+      Budget.aggregate([
+        { $match: { ...filter, employee: new Budget.base.Types.ObjectId(String(employeeId)) } },
+        { $group: { _id: "$doctor", paidAmount: { $sum: "$paidAmount" } } },
+        { $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" } },
+        { $unwind: { path: "$doctor", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            name: {
+              $ifNull: [{ $concat: ["$doctor.firstName", " ", "$doctor.lastName"] }, "Unknown Doctor"],
+            },
+            value: { $round: ["$paidAmount", 2] },
+          },
+        },
+      ]),
+    ]);
+
+    const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
     let totalPrescriptionAmount = 0;
     let totalSalesAmount = 0;
     let totalTargetAmount = 0;
@@ -147,21 +166,6 @@ export async function getBudgetAllotment(req, res) {
       totalSalesAmount += (it.sale || 0) * price;
       totalTargetAmount += (it.quota || 0) * price;
     });
-
-    const chartData = await Budget.aggregate([
-      { $match: filter },
-      { $group: { _id: "$doctor", paidAmount: { $sum: "$paidAmount" } } },
-      { $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" } },
-      { $unwind: { path: "$doctor", preserveNullAndEmptyArrays: true } },
-      {
-        $project: {
-          name: {
-            $ifNull: [{ $concat: ["$doctor.firstName", " ", "$doctor.lastName"] }, "Unknown Doctor"],
-          },
-          value: { $round: ["$paidAmount", 2] },
-        },
-      },
-    ]);
 
     res.json({
       employeeName: employee?.name || "—",
