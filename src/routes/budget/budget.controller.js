@@ -8,7 +8,9 @@ import DoctorTarget from "../../models/DoctorTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import "../../models/Drug.js";
-import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { getScopeEmployeeIds, applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
+
+const OTHER_DIVISION = { error: "ეს ბიუჯეტი სხვა დივიზიონს ეკუთვნის" };
 
 const POPULATE = "employee doctor region section group";
 
@@ -37,6 +39,7 @@ export async function getAllBudgets(req, res) {
       if (req.query.from) filter.date.$gte = new Date(req.query.from);
       if (req.query.to) filter.date.$lte = new Date(req.query.to);
     }
+    await applyEmployeeScope(req.employee, filter);
 
     const budgets = await Budget.find(filter).populate(POPULATE).sort({ date: -1 }).lean();
     res.json(budgets);
@@ -49,6 +52,9 @@ export async function getAllBudgets(req, res) {
 // POST /api/budgets
 export async function createBudget(req, res) {
   try {
+    if (!(await canSeeEmployee(req.employee, req.body.employee))) {
+      return res.status(403).json(OTHER_DIVISION);
+    }
     const orgFields = await resolveOrgFields(req.body.employee);
     const budget = await Budget.create({ ...req.body, ...orgFields });
 
@@ -69,6 +75,13 @@ export async function createBudget(req, res) {
 
 export async function updateBudget(req, res) {
   try {
+    const current = await Budget.findById(req.params.id).select("employee").lean();
+    if (!current) return res.status(404).json({ error: "Budget not found" });
+    if (!(await canSeeEmployee(req.employee, current.employee))) return res.status(403).json(OTHER_DIVISION);
+    if (req.body.employee && !(await canSeeEmployee(req.employee, req.body.employee))) {
+      return res.status(403).json(OTHER_DIVISION);
+    }
+
     // employee shouldn't normally change on update, but re-resolve org
     // fields in case it does
     const orgFields = req.body.employee ? await resolveOrgFields(req.body.employee) : {};
@@ -87,8 +100,10 @@ export async function updateBudget(req, res) {
 
 export async function deleteBudget(req, res) {
   try {
-    const budget = await Budget.findByIdAndDelete(req.params.id);
+    const budget = await Budget.findById(req.params.id).select("employee").lean();
     if (!budget) return res.status(404).json({ error: "Budget not found" });
+    if (!(await canSeeEmployee(req.employee, budget.employee))) return res.status(403).json(OTHER_DIVISION);
+    await Budget.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (err) {
     console.error("deleteBudget failed:", err);
@@ -204,6 +219,7 @@ export async function computeBudgetAmounts(req, res) {
     if (!employee || !doctor || !date) {
       return res.status(400).json({ error: "employee, doctor and date are required" });
     }
+    if (!(await canSeeEmployee(req.employee, employee))) return res.status(403).json(OTHER_DIVISION);
 
     const d = new Date(date);
     const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);

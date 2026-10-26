@@ -2,6 +2,7 @@ import Budget from "../../models/Budget.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
 import Group from "../../models/Group.js";
+import { applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
 
 // GET /api/budgets-list?search=&doctor=&employee=&section=&group=&fromDate=&toDate=&isActive=&page=&limit=
 export async function getAllBudgets(req, res) {
@@ -32,6 +33,9 @@ export async function getAllBudgets(req, res) {
         { employee: { $in: matchingEmployees } },
       ];
     }
+
+    // everyone sees only their own division / group / self (admin, director, finance: all)
+    await applyEmployeeScope(req.employee, filter);
 
     const pageNum = Math.max(parseInt(page) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
@@ -95,6 +99,9 @@ export async function toggleBudgetActive(req, res) {
   try {
     const budget = await Budget.findById(req.params.id);
     if (!budget) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, budget.employee))) {
+      return res.status(403).json({ error: "ეს ბიუჯეტი სხვა დივიზიონს ეკუთვნის" });
+    }
     budget.isActive = !budget.isActive;
     await budget.save();
     res.json(budget);
@@ -106,8 +113,12 @@ export async function toggleBudgetActive(req, res) {
 
 export async function deleteBudget(req, res) {
   try {
-    const deleted = await Budget.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: "Not found" });
+    const budget = await Budget.findById(req.params.id).select("employee").lean();
+    if (!budget) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, budget.employee))) {
+      return res.status(403).json({ error: "ეს ბიუჯეტი სხვა დივიზიონს ეკუთვნის" });
+    }
+    await Budget.findByIdAndDelete(req.params.id);
     res.json({ success: true });
   } catch (err) {
     console.error("deleteBudget failed:", err);

@@ -85,6 +85,28 @@ export function seesEverything(requester) {
 // Central scoping helper. Returns:
 //   null  -> sees everyone (admin/director/finance/office manager) — do not filter
 //   [ids] -> restrict to exactly these employee IDs (division/group manager)
+// true if this requester may see / change records of that employee
+// (admin, director, finance... -> everyone; managers -> their people; others -> themselves)
+export async function canSeeEmployee(requester, employeeId) {
+  const scope = await getScopeEmployeeIds(requester);
+  if (!scope) return true;
+  const target = String(employeeId?._id || employeeId || "");
+  return scope.some((id) => String(id) === target);
+}
+
+// narrows a Mongo filter's "employee" field to the requester's scope
+export async function applyEmployeeScope(requester, filter, field = "employee") {
+  const scope = await getScopeEmployeeIds(requester);
+  if (!scope) return filter;
+  const allowed = new Set(scope.map(String));
+  if (filter[field] && typeof filter[field] !== "object") {
+    if (!allowed.has(String(filter[field]))) filter[field] = { $in: [] };
+  } else {
+    filter[field] = { $in: scope };
+  }
+  return filter;
+}
+
 export async function getScopeEmployeeIds(requester) {
   if (seesEverything(requester)) return null;
   return getVisibleEmployeeIds(requester);
