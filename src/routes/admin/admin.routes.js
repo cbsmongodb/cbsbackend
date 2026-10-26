@@ -91,7 +91,16 @@ roleRouter.delete("/:id", async (req, res) => {
 export const roleRoutes = roleRouter;
 // Designation's text field is "position", not "name" (search + ?lite=1 use it)
 export const designationRoutes = makeRouter(Designation, "", null, ["position"]);
-export const groupRoutes = makeRouter(Group, "region section head", "group");
+// list / edit only show names of the linked region, section and head
+export const groupRoutes = makeRouter(
+  Group,
+  [
+    { path: "region", select: "name" },
+    { path: "section", select: "name" },
+    { path: "head", select: "firstName lastName" },
+  ],
+  "group"
+);
 export const regionRoutes = makeRouter(Region, "parent", "region");
 
 export const sectionRoutes = makeRouter(Section, "region head groups", "section");

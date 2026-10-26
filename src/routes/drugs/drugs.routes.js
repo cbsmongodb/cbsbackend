@@ -34,6 +34,12 @@ async function getAllDrugs(req, res) {
 
     const populate = "productType profiles manufacturers";
 
+    // ?lite=1 -> just names for dropdowns (no populate)
+    if (req.query.lite && !page && !limit) {
+      const docs = await Drug.find(filter).select("name").sort({ name: 1 }).lean();
+      return res.json(docs);
+    }
+
     if (!page && !limit) {
       const docs = await Drug.find(filter).populate(populate).sort({ createdAt: -1 }).lean();
       return res.json(docs);
