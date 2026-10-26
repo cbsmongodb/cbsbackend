@@ -15,7 +15,7 @@ export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
       const filter = { ...buildFilter(), ...(req.scopeFilter || {}) };
 
       if (!page && !limit) {
-        const docs = await Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 });
+        const docs = await Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 }).lean();
         return res.json(docs);
       }
 
@@ -24,7 +24,7 @@ export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
       const skip = (pageNum - 1) * limitNum;
 
       const [docs, total] = await Promise.all([
-        Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+        Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
         Model.countDocuments(filter),
       ]);
 
@@ -45,7 +45,7 @@ export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
 export function getOne(Model, defaultPopulate = "") {
   return async (req, res) => {
     try {
-      const doc = await Model.findById(req.params.id).populate(defaultPopulate);
+      const doc = await Model.findById(req.params.id).populate(defaultPopulate).lean();
       if (!doc) return res.status(404).json({ error: `${Model.modelName} not found` });
       res.json(doc);
     } catch (err) {
@@ -107,8 +107,7 @@ export function deleteOne(Model) {
 export function exportExcel(Model, columns, defaultPopulate = "") {
   return async (req, res) => {
     try {
-      const docs = await Model.find().populate(defaultPopulate).sort({ createdAt: -1 });
-      const rows = docs.map((doc) => doc.toObject());
+      const rows = await Model.find().populate(defaultPopulate).sort({ createdAt: -1 }).lean();
       await sendAsExcel(res, {
         filename: `${Model.modelName}-${new Date().toISOString().slice(0, 10)}.xlsx`,
         columns,

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { invalidateCachesOnWrite } from "../utils/cacheBus.js";
 
 const sectionSchema = new mongoose.Schema(
   {
@@ -13,5 +14,11 @@ const sectionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// speeds up the most common filters (reports, dashboards, scope lookups)
+sectionSchema.index({ head: 1 });
+sectionSchema.index({ groups: 1 });
+
+invalidateCachesOnWrite(sectionSchema);
 
 export default mongoose.model("Section", sectionSchema);

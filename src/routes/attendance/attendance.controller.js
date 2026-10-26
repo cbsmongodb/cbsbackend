@@ -59,12 +59,13 @@ export async function getCurrentLocations(req, res) {
       addressableType: "Employee",
       addressType: "current_location",
       updatedAt: { $gte: startOfDay },
-    });
+    }).lean();
 
     const employeeIds = locations.map((l) => l.addressableId);
     const employees = await Employee.find({ _id: { $in: employeeIds } })
       .select("firstName lastName group")
-      .populate("group", "name");
+      .populate("group", "name")
+      .lean();
     const employeeMap = new Map(employees.map((e) => [String(e._id), e]));
 
     const results = locations
@@ -105,7 +106,10 @@ export function markAttendance(io) {
         employee: req.employee._id,
         attendanceTime: { $gte: startOfDay },
         viaPlan: null,
-      }).sort({ attendanceTime: -1 });
+      })
+        .select("attendanceType")
+        .sort({ attendanceTime: -1 })
+        .lean();
       const expected = latest?.attendanceType === "checkin" ? "checkout" : "checkin";
       if (type !== expected) {
         return res.status(409).json({
@@ -172,13 +176,18 @@ export async function getLiveFeed(req, res) {
 
     const plans = await PlanConfiguration.find(planQuery)
       .populate("performer", "firstName lastName")
-      .populate("hospital", "name lat lng address");
+      .populate("hospital", "name lat lng address")
+      .select("performer hospital status")
+      .lean();
 
     const planIds = plans.map((p) => p._id);
     const planAddresses = await Address.find({
       addressableType: "PlanConfiguration",
       addressableId: { $in: planIds },
-    }).sort({ createdAt: 1 });
+    })
+      .select("addressableId addressType lat lng cleanAddress createdAt")
+      .sort({ createdAt: 1 })
+      .lean();
 
     const addressesByPlan = new Map();
     planAddresses.forEach((a) => {
@@ -220,13 +229,17 @@ export async function getLiveFeed(req, res) {
 
     const standaloneAttendances = await Attendance.find(standaloneQuery)
       .populate("employee", "firstName lastName")
-      .sort({ attendanceTime: 1 });
+      .select("employee attendanceType attendanceTime")
+      .sort({ attendanceTime: 1 })
+      .lean();
 
     const attendanceIds = standaloneAttendances.map((a) => a._id);
     const attendanceAddresses = await Address.find({
       addressableType: "Attendance",
       addressableId: { $in: attendanceIds },
-    });
+    })
+      .select("addressableId lat lng cleanAddress")
+      .lean();
     const addressByAttendance = new Map(
       attendanceAddresses.map((a) => [String(a.addressableId), a])
     );
@@ -296,11 +309,11 @@ export async function getDailyStatus(req, res) {
     const startOfDay = georgiaDayStart(day);
     const endOfDay = georgiaDayEnd(day);
 
-    const employees = await Employee.find({ isActive: true }).select("firstName lastName");
+    const employees = await Employee.find({ isActive: true }).select("firstName lastName").lean();
 
     const records = await Attendance.find({
       attendanceTime: { $gte: startOfDay, $lte: endOfDay },
-    });
+    }).lean();
 
     const byEmployee = {};
     for (const r of records) {
@@ -339,19 +352,25 @@ export async function getEmployeeDay(req, res) {
     const startOfDay = georgiaDayStart(day);
     const endOfDay = georgiaDayEnd(day);
 
-    const employee = await Employee.findById(employeeId).select("firstName lastName");
+    const employee = await Employee.findById(employeeId).select("firstName lastName").lean();
 
     const plans = await PlanConfiguration.find({
       performer: employeeId,
       period: { $gte: startOfDay, $lte: endOfDay },
       status: { $in: ["i_went", "i_left", "completed"] },
-    }).populate("hospital", "name lat lng");
+    })
+      .select("hospital")
+      .populate("hospital", "name lat lng")
+      .lean();
 
     const planIds = plans.map((p) => p._id);
     const planAddresses = await Address.find({
       addressableType: "PlanConfiguration",
       addressableId: { $in: planIds },
-    }).sort({ createdAt: 1 });
+    })
+      .select("addressableId addressType lat lng createdAt")
+      .sort({ createdAt: 1 })
+      .lean();
 
     const addressesByPlan = new Map();
     planAddresses.forEach((a) => {
@@ -393,7 +412,10 @@ export async function getEmployeeDay(req, res) {
       employee: employeeId,
       attendanceTime: { $gte: startOfDay, $lte: endOfDay },
       viaPlan: null,
-    }).sort({ attendanceTime: 1 });
+    })
+      .select("attendanceType attendanceTime")
+      .sort({ attendanceTime: 1 })
+      .lean();
 
     const standaloneVisits = [];
     let openCheckin = null;
@@ -477,7 +499,10 @@ export async function getMyStatus(req, res) {
       employee: req.employee._id,
       attendanceTime: { $gte: startOfDay },
       viaPlan: null,
-    }).sort({ attendanceTime: -1 });
+    })
+      .select("attendanceType attendanceTime")
+      .sort({ attendanceTime: -1 })
+      .lean();
 
     const latest = records[0];
     const nextAction = latest?.attendanceType === "checkin" ? "checkout" : "checkin";

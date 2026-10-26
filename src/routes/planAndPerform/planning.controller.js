@@ -79,15 +79,15 @@ export async function getAllPlannings(req, res) {
 export async function getPlanning(req, res) {
   try {
         const plan = await PlanConfiguration.findById(req.params.id)
-      .populate(POPULATE);
+      .populate(POPULATE).lean();
 
     if (!plan) return res.status(404).json({ error: "Plan not found" });
 
     const doctors = await PlanConfigurationDoctor.find({ planConfiguration: plan._id }).populate(
       "doctor"
-    );
+    ).lean();
 
-    res.json({ ...plan.toObject(), planConfigurationDoctors: doctors });
+    res.json({ ...plan, planConfigurationDoctors: doctors });
   } catch (err) {
     console.error("getPlanning failed:", err);
     res.status(500).json({ error: "Server error" });
@@ -319,7 +319,7 @@ export async function getVisitDurations(req, res) {
     })
       .populate("hospital", "name")
       .populate("pharmacy", "pharmacyName")
-      .sort({ iWentAt: 1 });
+      .sort({ iWentAt: 1 }).lean();
 
     const visits = plans.map((plan) => {
       const locationName = plan.hospital?.name || plan.pharmacy?.pharmacyName || "Unknown";
@@ -359,14 +359,14 @@ export async function getVisitDurations(req, res) {
 
 export async function doctorsForPlanHospital(req, res) {
   try {
-    const plan = await PlanConfiguration.findById(req.params.id);
+    const plan = await PlanConfiguration.findById(req.params.id).lean();
     if (!plan?.hospital) return res.json([]);
 
-    const hospital = await Hospital.findById(plan.hospital);
+    const hospital = await Hospital.findById(plan.hospital).lean();
     if (!hospital) return res.json([]);
 
     const Doctor = (await import("../../models/Doctor.js")).default;
-    const doctors = await Doctor.find({ "hospitals.hospital": plan.hospital, isActive: true });
+    const doctors = await Doctor.find({ "hospitals.hospital": plan.hospital, isActive: true }).lean();
 
     res.json(doctors);
   } catch (err) {

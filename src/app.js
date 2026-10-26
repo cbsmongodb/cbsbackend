@@ -1,6 +1,7 @@
 import express from "express";
 import { requestContext } from "./utils/requestContext.js";
 import cors from "cors";
+import compression from "compression";
 
 import { requirePermission, requirePermissionExceptRead, requireAnyPermission } from "./middleware/requirePermission.js";
 
@@ -76,6 +77,8 @@ app.use(
     credentials: true,
   })
 );
+  // gzip every JSON response — big lists / reports shrink ~5-10x on the wire
+  app.use(compression());
   // stock upload sends the Excel file as base64 -> bigger body limit,
   // registered first so the default 100kb parser skips these requests
   app.use("/api/stocks", express.json({ limit: "15mb" }));

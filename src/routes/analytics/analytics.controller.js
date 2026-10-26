@@ -30,12 +30,15 @@ async function getPrescriptionStats(doctorId, employeeId, fromDate, toDate) {
     doctor: doctorId,
     employee: employeeId,
     date: { $gte: fromDate, $lte: toDate },
-  }).select("_id");
+  }).select("_id").lean();
   const prescriptionIds = prescriptions.map((p) => p._id);
 
   const items = await DrugPrescription.find({
     prescription: { $in: prescriptionIds },
-  }).populate("drug", "name price bonus");
+  })
+    .select("drug totalNoOfBoxes saleBoxes")
+    .populate("drug", "name price bonus")
+    .lean();
 
   let prescriptionAmount = 0;
   let prescriptionBoxes = 0;
@@ -138,7 +141,8 @@ export async function getAnalytics(req, res) {
         .populate("employee", "firstName lastName")
         .sort({ date: 1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum)
+        .lean(),
       DoctorTarget.countDocuments(filter),
     ]);
 
@@ -146,7 +150,10 @@ export async function getAnalytics(req, res) {
     const targets = await MedicineTarget.find({
       medicineTargatableType: "DoctorTarget",
       medicineTargatableId: { $in: targetIds },
-    }).populate("drug", "price");
+    })
+      .select("medicineTargatableId totalNoOfBoxes drug")
+      .populate("drug", "price")
+      .lean();
 
     const targetByRow = new Map();
     targets.forEach((t) => {
@@ -165,8 +172,9 @@ export async function getAnalytics(req, res) {
     const rows = await Promise.all(
       docs.map(async (d) => {
         const pairKey = `${d.doctor?._id}_${d.employee?._id}`;
-        let pairStats = pairCache.get(pairKey);
-        if (!pairStats) {
+        let pairPromise = pairCache.get(pairKey);
+        if (!pairPromise) {
+          pairPromise = (async () => {
           const [prescStats, budgetAgg] = await Promise.all([
             getPrescriptionStats(d.doctor?._id, d.employee?._id, fromDate, toDate),
             Budget.aggregate([
@@ -186,13 +194,15 @@ export async function getAnalytics(req, res) {
               },
             ]),
           ]);
-          pairStats = {
+          return {
             ...prescStats,
             paidAmount: Math.round((budgetAgg[0]?.paid || 0) * 100) / 100,
             deltaAmount: Math.round((budgetAgg[0]?.delta || 0) * 100) / 100,
           };
-          pairCache.set(pairKey, pairStats);
+          })();
+          pairCache.set(pairKey, pairPromise);
         }
+        const pairStats = await pairPromise;
 
         // visits — scoped to THIS row's own month, unlike the pair stats above
         const monthStart = new Date(d.date.getFullYear(), d.date.getMonth(), 1);

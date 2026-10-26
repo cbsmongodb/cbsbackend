@@ -6,7 +6,7 @@ export async function getMyNotifications(req, res) {
     const notifications = await Notification.find({ employee: req.employee._id }).sort({
       read: 1,
       createdAt: -1,
-    });
+    }).lean();
     res.json(notifications);
   } catch (err) {
     console.error("getMyNotifications failed:", err);

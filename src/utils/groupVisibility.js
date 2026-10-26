@@ -1,6 +1,14 @@
 import Section from "../models/Section.js";
 import Group from "../models/Group.js";
 import Employee from "../models/Employee.js";
+import { createCache } from "./cacheBus.js";
+
+// visibility rarely changes — cache per user for 60s; any write to
+// Employee / Group / Section / Role clears it instantly (cacheBus)
+const groupsCache = createCache(60_000);
+const employeeIdsCache = createCache(60_000);
+const drugIdsCache = createCache(60_000);
+const scopeKey = (r) => `${r?._id}|${r?.role?.name || ""}|${r?.group || ""}`;
 
 // Which Group documents `requester` is allowed to see, based on the
 // Section/Group head hierarchy:
@@ -19,14 +27,19 @@ const SELF_ONLY_ROLES = new Set([
 ]);
 
 export async function getVisibleGroups(requester) {
+  const groups = await groupsCache(scopeKey(requester), () => computeVisibleGroups(requester));
+  return [...groups];
+}
+
+async function computeVisibleGroups(requester) {
   if (SELF_ONLY_ROLES.has((requester?.role?.name || "").toLowerCase().trim())) return [];
   // 1) Section head -> every group of that section (both link directions,
   //    in case Section.groups[] or Group.section is missing on one side)
-  const section = await Section.findOne({ head: requester._id }).populate("groups");
+  const section = await Section.findOne({ head: requester._id }).populate("groups").lean();
   if (section) {
     const byId = new Map();
     (section.groups || []).forEach((g) => byId.set(String(g._id), g));
-    const linked = await Group.find({ section: section._id });
+    const linked = await Group.find({ section: section._id }).lean();
     linked.forEach((g) => byId.set(String(g._id), g));
     if (byId.size > 0) return Array.from(byId.values());
   }
@@ -36,14 +49,14 @@ export async function getVisibleGroups(requester) {
   const roleName = (requester?.role?.name || "").toLowerCase().trim();
   const DIVISION_WIDE_ROLES = ["division manager", "product manager"];
   if (DIVISION_WIDE_ROLES.includes(roleName) && requester.group) {
-    const own = await Group.findById(requester.group).select("section");
+    const own = await Group.findById(requester.group).select("section").lean();
     if (own?.section) {
-      const divisionGroups = await Group.find({ section: own.section });
+      const divisionGroups = await Group.find({ section: own.section }).lean();
       if (divisionGroups.length > 0) return divisionGroups;
     }
   }
 
-  const ownGroups = await Group.find({ head: requester._id });
+  const ownGroups = await Group.find({ head: requester._id }).lean();
   if (ownGroups.length > 0) {
     return ownGroups;
   }
@@ -87,6 +100,11 @@ export async function getScopeEmployeeIds(requester) {
 // direct Employee.find({ group: ... }) so real members aren't silently
 // missed just because the mirror array was never filled in.
 export async function getVisibleEmployeeIds(requester) {
+  const ids = await employeeIdsCache(scopeKey(requester), () => computeVisibleEmployeeIds(requester));
+  return [...ids];
+}
+
+async function computeVisibleEmployeeIds(requester) {
   const groups = await getVisibleGroups(requester);
   if (groups.length === 0) {
     return [requester._id];
@@ -99,7 +117,7 @@ export async function getVisibleEmployeeIds(requester) {
     (g.members || []).forEach((m) => ids.add(String(m)));
   });
 
-  const memberEmployees = await Employee.find({ group: { $in: groupIds } }).select("_id");
+  const memberEmployees = await Employee.find({ group: { $in: groupIds } }).select("_id").lean();
   memberEmployees.forEach((e) => ids.add(String(e._id)));
 
   return Array.from(ids);
@@ -111,6 +129,11 @@ export async function getVisibleEmployeeIds(requester) {
 // their own Employee.group field, not the mostly-empty Group.members[]);
 // someone with no group at all sees none.
 export async function getVisibleDrugIds(requester) {
+  const ids = await drugIdsCache(scopeKey(requester), () => computeVisibleDrugIds(requester));
+  return [...ids];
+}
+
+async function computeVisibleDrugIds(requester) {
   const headGroups = await getVisibleGroups(requester);
   if (headGroups.length > 0) {
     const ids = new Set();
@@ -119,7 +142,7 @@ export async function getVisibleDrugIds(requester) {
   }
 
   if (requester.group) {
-    const memberGroup = await Group.findById(requester.group);
+    const memberGroup = await Group.findById(requester.group).select("drugs").lean();
     if (memberGroup) {
       return (memberGroup.drugs || []).map(String);
     }

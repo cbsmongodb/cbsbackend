@@ -35,7 +35,7 @@ export async function getAllEmployeeSales(req, res) {
         .populate("employee", "firstName lastName")
         .sort({ date: 1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum).lean(),
       EmployeeSale.countDocuments(filter),
     ]);
 
@@ -43,7 +43,7 @@ export async function getAllEmployeeSales(req, res) {
     const sales = await MedicineTarget.find({
       medicineTargatableType: "EmployeeSale",
       medicineTargatableId: { $in: saleIds },
-    }).populate("drug", "price");
+    }).populate("drug", "price").lean();
 
     const amountBySale = new Map();
     sales.forEach((s) => {
@@ -97,7 +97,7 @@ export async function getVisibleDrugsForSale(req, res) {
       const visibleIds = await getVisibleDrugIds(req.employee);
       filter._id = { $in: visibleIds };
     }
-    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 });
+    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 }).lean();
     res.json(drugs);
   } catch (err) {
     console.error("getVisibleDrugsForSale failed:", err);
@@ -131,12 +131,12 @@ export async function createEmployeeSale(req, res) {
 // GET /api/employee-sales/:id
 export async function getEmployeeSaleById(req, res) {
   try {
-    const sale = await EmployeeSale.findById(req.params.id).populate("employee", "firstName lastName name");
+    const sale = await EmployeeSale.findById(req.params.id).populate("employee", "firstName lastName name").lean();
     if (!sale) return res.status(404).json({ error: "Not found" });
     const rows = await MedicineTarget.find({
       medicineTargatableType: "EmployeeSale",
       medicineTargatableId: sale._id,
-    }).populate("drug", "name price");
+    }).populate("drug", "name price").lean();
     res.json({
       _id: sale._id,
       date: sale.date,

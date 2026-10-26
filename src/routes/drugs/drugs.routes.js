@@ -35,7 +35,7 @@ async function getAllDrugs(req, res) {
     const populate = "productType profiles manufacturers";
 
     if (!page && !limit) {
-      const docs = await Drug.find(filter).populate(populate).sort({ createdAt: -1 });
+      const docs = await Drug.find(filter).populate(populate).sort({ createdAt: -1 }).lean();
       return res.json(docs);
     }
 
@@ -44,7 +44,7 @@ async function getAllDrugs(req, res) {
     const skip = (pageNum - 1) * limitNum;
 
     const [docs, total] = await Promise.all([
-      Drug.find(filter).populate(populate).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Drug.find(filter).populate(populate).sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
       Drug.countDocuments(filter),
     ]);
 

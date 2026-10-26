@@ -199,7 +199,7 @@ export async function commit(req, res) {
       if (it.sourceName) cur.names.push(String(it.sourceName).slice(0, 200));
       totals.set(id, cur);
     }
-    const existing = await Drug.find({ _id: { $in: [...totals.keys()] } }).select("_id");
+    const existing = await Drug.find({ _id: { $in: [...totals.keys()] } }).select("_id").lean();
     const valid = new Set(existing.map((d) => String(d._id)));
     const docs = [...totals]
       .filter(([id]) => valid.has(id))
@@ -215,7 +215,7 @@ export async function commit(req, res) {
     await DrugStock.deleteMany({ period });
     await DrugStock.insertMany(docs);
 
-    const latest = await DrugStock.findOne({}).sort({ period: -1 }).select("period");
+    const latest = await DrugStock.findOne({}).sort({ period: -1 }).select("period").lean();
     const updatedCurrent = latest?.period === period;
     if (updatedCurrent) {
       await Drug.bulkWrite(
@@ -247,7 +247,7 @@ export async function listPeriods(req, res) {
       { $sort: { _id: -1 } },
     ]);
     const ids = agg.map((a) => a.uploadedBy).filter(Boolean);
-    const people = await Employee.find({ _id: { $in: ids } }).select("firstName lastName");
+    const people = await Employee.find({ _id: { $in: ids } }).select("firstName lastName").lean();
     const names = new Map(people.map((p) => [String(p._id), `${p.firstName || ""} ${p.lastName || ""}`.trim()]));
     res.json(
       agg.map((a) => ({
@@ -269,7 +269,7 @@ export async function getPeriod(req, res) {
   try {
     const { period } = req.params;
     if (!PERIOD_RE.test(period || "")) return res.status(400).json({ error: "არასწორი თვე" });
-    const rows = await DrugStock.find({ period }).populate("drug", "name");
+    const rows = await DrugStock.find({ period }).populate("drug", "name").lean();
     res.json(
       rows
         .map((r) => ({ drug: r.drug?.name || "—", stocks: r.stocks, sourceName: r.sourceName || "" }))

@@ -13,4 +13,9 @@ const prescriptionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+prescriptionSchema.index({ date: -1 });
+prescriptionSchema.index({ employee: 1, date: -1 });
+prescriptionSchema.index({ doctor: 1, employee: 1, date: 1 });
+
 export default mongoose.model("Prescription", prescriptionSchema);

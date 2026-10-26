@@ -45,4 +45,25 @@ doctorSchema.virtual("hospitalIds").get(function () {
 });
 doctorSchema.set("toJSON", { virtuals: true });
 
+// .lean() skips virtuals — add the same "name" / "hospitalIds" / "id" the JSON
+// output had, so lean queries (and lean populates) return the same shape
+function addLeanVirtuals(res) {
+  if (!res || !this.mongooseOptions().lean) return;
+  for (const d of Array.isArray(res) ? res : [res]) {
+    if (!d || typeof d !== "object") continue;
+    if (d.name === undefined && (d.firstName !== undefined || d.lastName !== undefined)) {
+      d.name = [d.firstName, d.lastName].filter(Boolean).join(" ");
+    }
+    if (d.hospitalIds === undefined && Array.isArray(d.hospitals)) {
+      d.hospitalIds = d.hospitals.map((h) => h && h.hospital).filter(Boolean);
+    }
+    if (d._id && d.id === undefined) d.id = String(d._id);
+  }
+}
+doctorSchema.post("find", addLeanVirtuals);
+doctorSchema.post("findOne", addLeanVirtuals);
+
+// speeds up the most common filters (reports, dashboards, scope lookups)
+doctorSchema.index({ "hospitals.hospital": 1 });
+
 export default mongoose.model("Doctor", doctorSchema);

@@ -8,4 +8,8 @@ const employeeSaleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+employeeSaleSchema.index({ employee: 1, date: 1 });
+employeeSaleSchema.index({ date: 1 });
+
 export default mongoose.model("EmployeeSale", employeeSaleSchema);

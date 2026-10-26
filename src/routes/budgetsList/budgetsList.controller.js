@@ -53,7 +53,7 @@ export async function getAllBudgets(req, res) {
         .populate("region", "name")
         .sort({ date: -1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum).lean(),
       Budget.countDocuments(filter),
     ]);
 

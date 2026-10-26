@@ -18,7 +18,7 @@ async function countChargeableDays(startDate, endDate) {
   start.setHours(0, 0, 0, 0);
   end.setHours(0, 0, 0, 0);
 
-  const restDays = await RestDay.find({ date: { $gte: start, $lte: end } });
+  const restDays = await RestDay.find({ date: { $gte: start, $lte: end } }).lean();
   const restDayKeys = new Set(restDays.map((r) => toDateKey(r.date)));
 
   let count = 0;
@@ -47,7 +47,7 @@ export async function getBalance(req, res) {
     const entries = await LeaveEntry.find({
       employee,
       startDate: { $gte: startOfYear, $lte: endOfYear },
-    });
+    }).lean();
 
     const used = { paid: 0, unpaid: 0, sick: 0 };
     entries.forEach((e) => {
@@ -108,7 +108,7 @@ export async function getAllEntries(req, res) {
     const entries = await LeaveEntry.find(filter)
       .populate("employee", "firstName lastName")
       .populate("createdBy", "firstName lastName")
-      .sort({ startDate: -1 });
+      .sort({ startDate: -1 }).lean();
     res.json(entries);
   } catch (err) {
     console.error("getAllEntries failed:", err);
@@ -138,7 +138,7 @@ export async function createEntry(req, res) {
       employee,
       type,
       startDate: { $gte: startOfYear, $lte: endOfYear },
-    });
+    }).lean();
     const used = existing.reduce((sum, e) => sum + e.daysCount, 0);
 
     if (used + daysCount > total) {
@@ -188,7 +188,7 @@ export async function getRestDays(req, res) {
       if (req.query.from) filter.date.$gte = new Date(req.query.from);
       if (req.query.to) filter.date.$lte = new Date(req.query.to);
     }
-    const restDays = await RestDay.find(filter).sort({ date: 1 });
+    const restDays = await RestDay.find(filter).sort({ date: 1 }).lean();
     res.json(restDays);
   } catch (err) {
     console.error("getRestDays failed:", err);

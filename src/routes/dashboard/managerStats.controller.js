@@ -17,25 +17,27 @@ export async function getManagerStats(req, res) {
 
     const empFilter = { isActive: true };
     if (scopeIds) empFilter._id = { $in: scopeIds };
-    const teamSize = await Employee.countDocuments(empFilter);
-
     const planTodayFilter = { period: { $gte: startOfDay }, status: { $in: ["i_went", "i_left", "completed"] } };
     if (scopeIds) planTodayFilter.performer = { $in: scopeIds };
-    const activePlanIds = await PlanConfiguration.find(planTodayFilter).distinct("performer");
     const attTodayFilter = { attendanceTime: { $gte: startOfDay }, viaPlan: null };
     if (scopeIds) attTodayFilter.employee = { $in: scopeIds };
-    const activeAttIds = await Attendance.find(attTodayFilter).distinct("employee");
-    const activeToday = new Set([...activePlanIds.map(String), ...activeAttIds.map(String)]).size;
-
     const planMonthFilter = { period: { $gte: monthStart, $lte: monthEnd }, status: "completed" };
     if (scopeIds) planMonthFilter.performer = { $in: scopeIds };
-    const monthPlanIds = await PlanConfiguration.find(planMonthFilter).distinct("_id");
+    const entryFilter = { period: monthStart };
+    if (scopeIds) entryFilter.employee = { $in: scopeIds };
+
+    // independent queries -> run them at the same time instead of one by one
+    const [teamSize, activePlanIds, activeAttIds, monthPlanIds, items] = await Promise.all([
+      Employee.countDocuments(empFilter),
+      PlanConfiguration.find(planTodayFilter).distinct("performer"),
+      Attendance.find(attTodayFilter).distinct("employee"),
+      PlanConfiguration.find(planMonthFilter).distinct("_id"),
+      DoctorEntryItem.find(entryFilter).select("drug sale quota prescription").populate("drug", "price").lean(),
+    ]);
+    const activeToday = new Set([...activePlanIds.map(String), ...activeAttIds.map(String)]).size;
     const visitsThisMonth = monthPlanIds.length;
     const doctorsVisited = await PlanConfigurationDoctor.countDocuments({ planConfiguration: { $in: monthPlanIds } });
 
-    const entryFilter = { period: monthStart };
-    if (scopeIds) entryFilter.employee = { $in: scopeIds };
-    const items = await DoctorEntryItem.find(entryFilter).populate("drug", "price");
     let salesAmount = 0, targetAmount = 0, prescriptionAmount = 0;
     items.forEach((it) => {
       const price = it.drug?.price || 0;

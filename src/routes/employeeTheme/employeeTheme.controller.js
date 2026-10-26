@@ -1,6 +1,11 @@
 import Employee from "../../models/Employee.js";
 import Section from "../../models/Section.js";
 import Group from "../../models/Group.js";
+import { createCache } from "../../utils/cacheBus.js";
+
+// the sidebar asks for this on every page load — it only changes when the
+// employee / their group / section changes (those writes clear the cache)
+const themeCache = createCache(120_000);
 
 // extracts a division number (1/2/3) from a Section name, handling both
 // naming styles found in real data: "1 DIVIZION"/"2 DIVIZION"/"3 DIVIZION"
@@ -19,24 +24,24 @@ function getDivisionNumber(name) {
 
 async function resolveSectionName(employee) {
   // 1. employee is the head of a Section directly
-  const headedSection = await Section.findOne({ head: employee._id }).select("name");
+  const headedSection = await Section.findOne({ head: employee._id }).select("name").lean();
   if (headedSection) return headedSection.name;
 
   // 2. figure out which group is relevant: one they head, or one they're a member of
   let groupId = null;
 
-  const headedGroup = await Group.findOne({ head: employee._id }).select("_id section");
+  const headedGroup = await Group.findOne({ head: employee._id }).select("_id section").lean();
   if (headedGroup) {
     groupId = headedGroup._id;
     if (headedGroup.section) {
-      const sec = await Section.findById(headedGroup.section).select("name");
+      const sec = await Section.findById(headedGroup.section).select("name").lean();
       if (sec) return sec.name;
     }
   } else if (employee.group) {
     groupId = employee.group;
-    const memberGroup = await Group.findById(employee.group).select("section");
+    const memberGroup = await Group.findById(employee.group).select("section").lean();
     if (memberGroup?.section) {
-      const sec = await Section.findById(memberGroup.section).select("name");
+      const sec = await Section.findById(memberGroup.section).select("name").lean();
       if (sec) return sec.name;
     }
   }
@@ -45,7 +50,7 @@ async function resolveSectionName(employee) {
   // listed in some Section's own "groups" array (the two links aren't
   // auto-synced with each other)
   if (groupId) {
-    const containingSection = await Section.findOne({ groups: groupId }).select("name");
+    const containingSection = await Section.findOne({ groups: groupId }).select("name").lean();
     if (containingSection) return containingSection.name;
   }
 
@@ -59,17 +64,27 @@ const WAREHOUSE_POSITIONS = ["Warehouse Manager", "Warehouse Head"];
 // division-level staff) which Section their group belongs to
 export async function getMyTheme(req, res) {
   try {
+    const key = `${req.employee._id}|${req.employee.role?.name || ""}`;
+    res.json(await themeCache(key, () => computeTheme(req.employee)));
+  } catch (err) {
+    console.error("getMyTheme failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+async function computeTheme(reqEmployee) {
+  {
     // requireAuth only populates .role on req.employee, not .designation —
     // fetch it fresh here so position is actually available
-    const employee = await Employee.findById(req.employee._id).populate(
-      "designation",
-      "position"
-    );
+    const employee = await Employee.findById(reqEmployee._id)
+      .select("email group designation")
+      .populate("designation", "position")
+      .lean();
     const position = employee.designation?.position || null;
 
     let scheme = "office";
     // no designation -> show the role name (e.g. "Sales Manager")
-    let label = position || req.employee.role?.name || null;
+    let label = position || reqEmployee.role?.name || null;
     let divisionNumber = null;
 
     // hardcoded for this specific account — same physical person does both
@@ -99,9 +114,6 @@ export async function getMyTheme(req, res) {
       }
     }
 
-    res.json({ scheme, label, divisionNumber, position });
-  } catch (err) {
-    console.error("getMyTheme failed:", err);
-    res.status(500).json({ error: "Server error" });
+    return { scheme, label, divisionNumber, position };
   }
 }

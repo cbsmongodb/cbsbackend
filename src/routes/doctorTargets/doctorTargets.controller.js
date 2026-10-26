@@ -42,7 +42,7 @@ export async function getAllDoctorTargets(req, res) {
         .populate("employee", "firstName lastName")
         .sort({ date: 1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum).lean(),
       DoctorTarget.countDocuments(filter),
     ]);
 
@@ -50,7 +50,7 @@ export async function getAllDoctorTargets(req, res) {
     const targets = await MedicineTarget.find({
       medicineTargatableType: "DoctorTarget",
       medicineTargatableId: { $in: targetIds },
-    }).populate("drug", "price");
+    }).populate("drug", "price").lean();
 
     const amountByTarget = new Map();
     targets.forEach((t) => {
@@ -105,7 +105,7 @@ export async function getVisibleDrugsForDoctorTarget(req, res) {
       const visibleIds = await getVisibleDrugIds(req.employee);
       filter._id = { $in: visibleIds };
     }
-    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 });
+    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 }).lean();
     res.json(drugs);
   } catch (err) {
     console.error("getVisibleDrugsForDoctorTarget failed:", err);
@@ -149,13 +149,13 @@ export async function getDoctorTargetById(req, res) {
   try {
     const target = await DoctorTarget.findById(req.params.id)
       .populate("employee", "firstName lastName name")
-      .populate("doctor", "firstName lastName name");
+      .populate("doctor", "firstName lastName name").lean();
     if (!target) return res.status(404).json({ error: "Not found" });
 
     const rows = await MedicineTarget.find({
       medicineTargatableType: "DoctorTarget",
       medicineTargatableId: target._id,
-    }).populate("drug", "name price");
+    }).populate("drug", "name price").lean();
 
     res.json({
       _id: target._id,

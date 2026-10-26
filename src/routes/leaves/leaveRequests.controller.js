@@ -43,10 +43,10 @@ function daysOf(entry) {
 }
 
 async function summaryFor(employeeId, year) {
-  const bal = await LeaveBalance.findOne({ employee: employeeId, year });
+  const bal = await LeaveBalance.findOne({ employee: employeeId, year }).lean();
   const total = bal?.paidDaysTotal ?? 24;
   const [from, to] = yearRange(year);
-  const entries = await LeaveEntry.find({ employee: employeeId, startDate: { $gte: from, $lte: to } });
+  const entries = await LeaveEntry.find({ employee: employeeId, startDate: { $gte: from, $lte: to } }).lean();
   const used = { paid: 0, unpaid: 0, sick: 0 };
   const pending = { paid: 0, unpaid: 0, sick: 0 };
   entries.forEach((e) => {
@@ -64,7 +64,7 @@ export async function getMine(req, res) {
   try {
     const year = Number(req.query.year) || new Date().getUTCFullYear();
     const [from, to] = yearRange(year);
-    const requests = await populate(LeaveEntry.find({ employee: req.employee._id, startDate: { $gte: from, $lte: to } }).sort({ startDate: -1 }));
+    const requests = await populate(LeaveEntry.find({ employee: req.employee._id, startDate: { $gte: from, $lte: to } }).sort({ startDate: -1 }).lean());
     res.json({ summary: await summaryFor(req.employee._id, year), requests, canApprove: canApprove(req.employee), canView: canView(req.employee) });
   } catch (err) {
     console.error("leave getMine failed:", err);
@@ -77,7 +77,7 @@ export async function getRestDaysForYear(req, res) {
   try {
     const year = Number(req.query.year) || new Date().getUTCFullYear();
     const [from, to] = yearRange(year);
-    const rows = await RestDay.find({ date: { $gte: new Date(from.getTime() - 86400000), $lte: to } }).select("date label");
+    const rows = await RestDay.find({ date: { $gte: new Date(from.getTime() - 86400000), $lte: to } }).select("date label").lean();
     res.json(rows.map((r) => ({ date: dayKey(new Date(r.date.getTime() + 12 * 3600e3)), label: r.label || "" })));
   } catch (err) {
     console.error("leave rest days failed:", err);
@@ -102,7 +102,7 @@ export async function createRequest(req, res) {
     }
     if (!days.length) return res.status(400).json({ error: "Choose at least one working day" });
     const firstDay = new Date(Math.min(...days.map((d) => d.date.getTime())) - 86400000);
-    const restKeys = new Set((await RestDay.find({ date: { $gte: firstDay } }).select("date"))
+    const restKeys = new Set((await RestDay.find({ date: { $gte: firstDay } }).select("date").lean())
       .map((r) => dayKey(new Date(r.date.getTime() + 12 * 3600e3))));
     days = days.filter((d) => !restKeys.has(dayKey(d.date)));
     if (!days.length) return res.status(400).json({ error: "Choose at least one working day" });
@@ -170,12 +170,14 @@ export async function getPending(req, res) {
     const scope = await approverScope(req.employee);
     const pf = { status: "pending" };
     if (scope) pf.employee = { $in: scope };
-    const rows = await populate(LeaveEntry.find(pf).sort({ createdAt: 1 }));
-    const out = [];
-    for (const r of rows) {
-      const year = new Date(r.startDate).getUTCFullYear();
-      out.push({ ...r.toObject(), summary: await summaryFor(r.employee?._id, year) });
-    }
+    const rows = await populate(LeaveEntry.find(pf).sort({ createdAt: 1 }).lean());
+    // summaries in parallel instead of one by one
+    const out = await Promise.all(
+      rows.map(async (r) => {
+        const year = new Date(r.startDate).getUTCFullYear();
+        return { ...r, summary: await summaryFor(r.employee?._id, year) };
+      })
+    );
     res.json(out);
   } catch (err) {
     console.error("leave getPending failed:", err);
@@ -221,10 +223,10 @@ export async function getArchive(req, res) {
     const scope = await approverScope(req.employee);
     const rf = { startDate: { $gte: from, $lte: to } };
     if (scope) rf.employee = { $in: scope };
-    const requests = await populate(LeaveEntry.find(rf).sort({ startDate: -1 }));
-    const balances = new Map((await LeaveBalance.find({ year })).map((b) => [String(b.employee), b.paidDaysTotal]));
+    const requests = await populate(LeaveEntry.find(rf).sort({ startDate: -1 }).lean());
+    const balances = new Map((await LeaveBalance.find({ year }).lean()).map((b) => [String(b.employee), b.paidDaysTotal]));
     const people = new Map();
-    const employees = await Employee.find({ isActive: { $ne: false }, ...(scope ? { _id: { $in: scope } } : {}) }).select("firstName lastName");
+    const employees = await Employee.find({ isActive: { $ne: false }, ...(scope ? { _id: { $in: scope } } : {}) }).select("firstName lastName").lean();
     employees.forEach((e) => people.set(String(e._id), {
       employee: { _id: e._id, firstName: e.firstName, lastName: e.lastName },
       paidTotal: balances.get(String(e._id)) ?? 24,

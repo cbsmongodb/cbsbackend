@@ -41,4 +41,7 @@ doctorEntryItemSchema.index(
 );
 doctorEntryItemSchema.index({ employee: 1, period: 1 });
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+doctorEntryItemSchema.index({ period: 1 });
+
 export default mongoose.model("DoctorEntryItem", doctorEntryItemSchema);

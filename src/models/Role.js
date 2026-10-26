@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { invalidateCachesOnWrite } from "../utils/cacheBus.js";
 
 const permissionSchema = new mongoose.Schema(
   {
@@ -24,5 +25,7 @@ const roleSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+invalidateCachesOnWrite(roleSchema);
 
 export default mongoose.model("Role", roleSchema);

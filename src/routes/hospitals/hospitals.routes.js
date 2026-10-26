@@ -33,7 +33,7 @@ export default function hospitalsRoutes(io) {
     try {
       const hospitals = await Hospital.find({
         $or: [{ lat: null }, { lat: { $exists: false } }],
-      }).select("name address");
+      }).select("name address").lean();
       res.json(hospitals);
     } catch (err) {
       console.error("missing-coordinates failed:", err);
@@ -160,7 +160,7 @@ export default function hospitalsRoutes(io) {
     try {
       const doctors = await Doctor.find({ "hospitals.hospital": req.params.id })
         .select("firstName lastName uniqueNumber isActive")
-        .sort({ firstName: 1, lastName: 1 });
+        .sort({ firstName: 1, lastName: 1 }).lean();
       res.json(doctors.map((d) => ({
         _id: d._id,
         name: [d.firstName, d.lastName].filter(Boolean).join(" "),
@@ -184,7 +184,7 @@ export default function hospitalsRoutes(io) {
       const doctors = await Doctor.find(filter)
         .select("firstName lastName uniqueNumber")
         .sort({ firstName: 1, lastName: 1 })
-        .limit(50);
+        .limit(50).lean();
       res.json(doctors.map((d) => ({
         _id: d._id,
         name: [d.firstName, d.lastName].filter(Boolean).join(" "),

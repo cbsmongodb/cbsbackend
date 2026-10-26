@@ -20,4 +20,7 @@ const attendanceSchema = new mongoose.Schema(
 
 attendanceSchema.index({ employee: 1, attendanceTime: -1 });
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+attendanceSchema.index({ attendanceTime: -1 });
+
 export default mongoose.model("Attendance", attendanceSchema);

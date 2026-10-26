@@ -19,6 +19,18 @@ function normalizeToMonthStart(dateLike) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
+// run async jobs with a small concurrency limit (keeps the DB connection pool happy)
+async function runLimited(jobs, limit = 8) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, jobs.length) }, async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      await job();
+    }
+  });
+  await Promise.all(workers);
+}
+
 function previousPeriodOf(period) {
   const d = new Date(period);
   return new Date(d.getFullYear(), d.getMonth() - 1, 1);
@@ -33,13 +45,13 @@ async function pharmacySalesByDrug(employeeId, period) {
   // half a day of slack so dates saved at Georgian or UTC midnight both fall in the month
   const from = new Date(start.getTime() - 12 * 3600e3);
   const to = new Date(next.getTime() - 12 * 3600e3);
-  const sales = await EmployeeSale.find({ employee: employeeId, date: { $gte: from, $lt: to } }).select("_id");
+  const sales = await EmployeeSale.find({ employee: employeeId, date: { $gte: from, $lt: to } }).select("_id").lean();
   const map = new Map();
   if (!sales.length) return map;
   const lines = await MedicineTarget.find({
     medicineTargatableType: "EmployeeSale",
     medicineTargatableId: { $in: sales.map((x) => x._id) },
-  }).select("drug totalNoOfBoxes");
+  }).select("drug totalNoOfBoxes").lean();
   lines.forEach((l) => {
     const k = String(l.drug);
     map.set(k, (map.get(k) || 0) + (l.totalNoOfBoxes || 0));
@@ -58,15 +70,15 @@ async function bonusesForPeriod(drugIds, period) {
   const monthly = await DrugBonus.find({
     drug: { $in: ids },
     period: { $gte: new Date(start.getTime() - 86400000), $lte: new Date(start.getTime() + 86400000) },
-  });
+  }).select("drug value").lean();
   monthly.forEach((b) => map.set(String(b.drug), b.value));
-  const drugs = await Drug.find({ _id: { $in: ids.filter((id) => !map.has(id)) } }).select("bonus");
+  const drugs = await Drug.find({ _id: { $in: ids.filter((id) => !map.has(id)) } }).select("bonus").lean();
   drugs.forEach((d) => { if (d.bonus) map.set(String(d._id), d.bonus); });
   return map;
 }
 
 async function recalculateForPeriod(employeeId, period) {
-  const items = await DoctorEntryItem.find({ employee: employeeId, period });
+  const items = await DoctorEntryItem.find({ employee: employeeId, period }).lean();
   if (items.length === 0) return;
 
   // Step 1 — coefficient & totalBudget per item (drug totals aggregated
@@ -85,7 +97,7 @@ async function recalculateForPeriod(employeeId, period) {
     if (totalsByDrug[drugKey]) totalsByDrug[drugKey].sale = boxes;
   }
 
-  const overrides = await CoefficientOverride.find({ employee: employeeId, period });
+  const overrides = await CoefficientOverride.find({ employee: employeeId, period }).select("drug coefficient").lean();
   const overrideByDrug = new Map(overrides.map((o) => [String(o.drug), o.coefficient]));
 
   const coefficientByItemId = new Map();
@@ -126,6 +138,8 @@ async function recalculateForPeriod(employeeId, period) {
     period: prevPeriod,
     doctor: { $in: items.map((i) => i.doctor) },
   })
+    .select("doctor drug analysisOfCurrentMonth")
+    .lean()
   const prevAnalysisByKey = new Map(
     prevItems.map((p) => [`${p.doctor}_${p.drug}`, p.analysisOfCurrentMonth || 0])
   )
@@ -168,7 +182,7 @@ export async function getListing(req, res) {
     }
 
     const scopeIds = await getScopeEmployeeIds(req.employee);
-    if (scopeIds && !scopeIds.map(String).includes(String(employee))) {
+    if (scopeIds && !scopeIds.some((id) => String(id) === String(employee))) {
       return res.json([]);
     }
 
@@ -178,9 +192,10 @@ export async function getListing(req, res) {
       .populate("doctor", "firstName lastName uniqueNumber")
       .populate("drug", "name price bonus")
       .populate("hospital", "name")
-      .sort({ doctor: 1 });
+      .sort({ doctor: 1 })
+      .lean();
 
-    const summaries = await DoctorEntrySummary.find({ employee, period: periodDate });
+    const summaries = await DoctorEntrySummary.find({ employee, period: periodDate }).lean();
     const summaryByDrug = new Map(summaries.map((s) => [String(s.drug), s]));
 
     const pharmacy = await pharmacySalesByDrug(employee, periodDate);
@@ -188,7 +203,7 @@ export async function getListing(req, res) {
       items,
       drugTotals: [...summaryByDrug.values()],
       pharmacySales: Object.fromEntries(pharmacy),
-      bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id")).map((d) => d._id), periodDate)),
+      bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id").lean()).map((d) => d._id), periodDate)),
     });
   } catch (err) {
     console.error("getListing failed:", err);
@@ -203,7 +218,8 @@ export async function getDoctorSnapshot(req, res) {
 
     const currentItems = await DoctorEntryItem.find({ employee, doctor, period: periodDate })
       .populate("drug", "name price")
-      .populate("hospital", "name");
+      .populate("hospital", "name")
+      .lean();
 
     const previousItem = await DoctorEntryItem.findOne({
       employee,
@@ -211,7 +227,8 @@ export async function getDoctorSnapshot(req, res) {
       period: { $lt: periodDate },
     })
       .sort({ period: -1 })
-      .populate("hospital", "name");
+      .populate("hospital", "name")
+      .lean();
 
     res.json({
       hospital: currentItems[0]?.hospital || previousItem?.hospital || null,
@@ -247,9 +264,24 @@ export async function submitEntries(req, res) {
       periodDate
     );
 
+    // one write per doctor+drug (last one wins, like before) and ONE summary
+    // write per drug, run in parallel — instead of 2 sequential DB round trips
+    // for every single row (that made a big form take tens of seconds)
+    const rowsByKey = new Map();
+    const rxByDrug = new Map();
     for (const entry of doctorEntries) {
       for (const drugRow of entry.drugs || []) {
-        await DoctorEntryItem.findOneAndUpdate(
+        const key = `${entry.doctorId}|${drugRow.drugId}`;
+        rowsByKey.delete(key);
+        rowsByKey.set(key, { entry, drugRow });
+        const dk = String(drugRow.drugId);
+        rxByDrug.set(dk, (rxByDrug.get(dk) || 0) + (drugRow.prescription || 0));
+      }
+    }
+
+    await runLimited(
+      [...rowsByKey.values()].map(({ entry, drugRow }) => () =>
+        DoctorEntryItem.findOneAndUpdate(
           { employee, doctor: entry.doctorId, drug: drugRow.drugId, period: periodDate },
           {
             employee,
@@ -269,25 +301,26 @@ export async function submitEntries(req, res) {
               : drugRow.budget !== undefined ? { budget: drugRow.budget || 0 } : {}),
           },
           { upsert: true, new: true, runValidators: true }
-        );
+        )
+      )
+    );
 
-        await DoctorEntrySummary.findOneAndUpdate(
-          { employee, drug: drugRow.drugId, period: periodDate },
-          {
-            $inc: {
-              prescription: drugRow.prescription || 0,
-            },
-          },
+    await runLimited(
+      [...rxByDrug.entries()].map(([drugId, rx]) => () =>
+        DoctorEntrySummary.findOneAndUpdate(
+          { employee, drug: drugId, period: periodDate },
+          { $inc: { prescription: rx } },
           { upsert: true }
-        );
-      }
-    }
+        )
+      )
+    );
 
     await recalculateForPeriod(employee, periodDate);
 
     const items = await DoctorEntryItem.find({ employee, period: periodDate })
       .populate("doctor", "firstName lastName")
-      .populate("drug", "name");
+      .populate("drug", "name")
+      .lean();
 
     res.status(201).json({ success: true, items });
   } catch (err) {
@@ -311,7 +344,8 @@ export async function updateEntryItem(req, res) {
     await recalculateForPeriod(item.employee, item.period);
     const refreshed = await DoctorEntryItem.findById(item._id)
       .populate("doctor", "firstName lastName")
-      .populate("drug", "name");
+      .populate("drug", "name")
+      .lean();
 
     res.json(refreshed);
   } catch (err) {
@@ -383,7 +417,8 @@ export async function getCoefficientOverrides(req, res) {
 
     const overrides = await CoefficientOverride.find({ employee, period: periodDate })
       .populate("drug", "name")
-      .populate("setBy", "firstName lastName");
+      .populate("setBy", "firstName lastName")
+      .lean();
 
     res.json(overrides);
   } catch (err) {
@@ -450,8 +485,8 @@ export async function getVisitCounts(req, res) {
       performer: employee,
       period: { $gte: from, $lt: to },
       status: { $in: ["i_went", "i_left", "completed"] },
-    }).select("_id");
-    const rows = await PlanConfigurationDoctor.find({ planConfiguration: { $in: plans.map((p) => p._id) } }).select("doctor");
+    }).select("_id").lean();
+    const rows = await PlanConfigurationDoctor.find({ planConfiguration: { $in: plans.map((p) => p._id) } }).select("doctor").lean();
     const counts = {};
     rows.forEach((r) => { const k = String(r.doctor); counts[k] = (counts[k] || 0) + 1; });
     res.json(counts);

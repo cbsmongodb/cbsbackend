@@ -22,10 +22,10 @@ async function pharmacySalesAmount(y, m, scope, prices) {
   const [from, to] = georgianMonth(y, m);
   const filter = { date: { $gte: new Date(from.getTime() - 12 * 3600e3), $lt: new Date(to.getTime() - 12 * 3600e3) } };
   if (scope) filter.employee = { $in: scope };
-  const sales = await EmployeeSale.find(filter).select("_id");
+  const sales = await EmployeeSale.find(filter).select("_id").lean();
   if (!sales.length) return { amount: 0, boxes: 0 };
   const lines = await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
-    .select("drug totalNoOfBoxes");
+    .select("drug totalNoOfBoxes").lean();
   let amount = 0, boxes = 0;
   lines.forEach((l) => { boxes += l.totalNoOfBoxes || 0; amount += (l.totalNoOfBoxes || 0) * (prices.get(String(l.drug)) || 0); });
   return { amount: r2(amount), boxes };
@@ -42,7 +42,7 @@ export async function getFinanceSummary(req, res) {
       ? req.query.month.split("-").map(Number)
       : [now.getUTCFullYear(), now.getUTCMonth() + 1];
     const scope = await getScopeEmployeeIds(req.employee);
-    const prices = new Map((await Drug.find({}).select("price")).map((d) => [String(d._id), d.price || 0]));
+    const prices = new Map((await Drug.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
 
     // doctors' budgets for the month (Data Entry): planned = sum of the drugs' totals, issued = what was paid
     const monthStart = new Date(Date.UTC(y, m - 1, 1));
@@ -51,7 +51,7 @@ export async function getFinanceSummary(req, res) {
     const items = await DoctorEntryItem.find(itemFilter)
       .select("employee doctor issuedBudget totalBudget bank")
       .populate("doctor", "firstName lastName uniqueNumber")
-      .populate("employee", "firstName lastName");
+      .populate("employee", "firstName lastName").lean();
     const byDoctor = new Map();
     items.forEach((it) => {
       const k = `${it.employee?._id}|${it.doctor?._id}`;
@@ -83,7 +83,7 @@ export async function getFinanceSummary(req, res) {
     const [bf, bt] = georgianMonth(y, m);
     const bFilter = { date: { $gte: bf, $lt: bt } };
     if (scope) bFilter.employee = { $in: scope };
-    const budgets = await Budget.find(bFilter).select("paidAmount");
+    const budgets = await Budget.find(bFilter).select("paidAmount").lean();
 
     res.json({
       month: `${y}-${String(m).padStart(2, "0")}`,

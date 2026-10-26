@@ -21,7 +21,7 @@ export async function getProductSale(req, res) {
 
     const items = await DrugPrescription.find({
       prescription: { $in: prescriptionIds },
-    }).populate("drug", "name price stocks monthlyTarget");
+    }).populate("drug", "name price stocks monthlyTarget").lean();
 
     const byDrug = new Map();
     items.forEach((it) => {
@@ -67,7 +67,7 @@ export async function getStockAvailability(req, res) {
     // small enough dataset (a few hundred drugs) to return in full and let
     // the table handle sort/search/pagination client-side — snappier UX
     const [allDrugs, lowStock, expired] = await Promise.all([
-      Drug.find({ isActive: true }).select("name stocks").sort({ name: 1 }),
+      Drug.find({ isActive: true }).select("name stocks").sort({ name: 1 }).lean(),
       Drug.checkLowStock(),
       Drug.checkExpiredDrugs(),
     ]);
@@ -98,9 +98,9 @@ export async function getOrders(req, res) {
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
     const [docs, total, thisMonthOrders] = await Promise.all([
-      Order.find().populate("drug", "name").sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Order.find().populate("drug", "name").sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Order.countDocuments(),
-      Order.find({ createdAt: { $gte: monthStart, $lte: monthEnd } }).select("createdAt"),
+      Order.find({ createdAt: { $gte: monthStart, $lte: monthEnd } }).select("createdAt").lean(),
     ]);
 
     const ordersByDay = {};
@@ -180,7 +180,7 @@ export async function getDoctorsReport(req, res) {
     // every data-entry line of the period (all doctors, so the rep's totals are complete)
     const itemFilter = { period: { $gte: monthFrom, $lte: toDate } };
     if (scoped) itemFilter.employee = { $in: scoped };
-    const items = await DoctorEntryItem.find(itemFilter).select("employee doctor drug period prescription").populate("drug", "name price");
+    const items = await DoctorEntryItem.find(itemFilter).select("employee doctor drug period prescription").populate("drug", "name price").lean();
 
     // rep's prescriptions per drug + month
     const rxTotal = new Map();
@@ -193,11 +193,11 @@ export async function getDoctorsReport(req, res) {
     const empIds = [...new Set(items.map((it) => String(it.employee)))];
     const saleFilter = { date: { $gte: new Date(monthFrom.getTime() - 12 * 3600e3), $lte: toDate } };
     saleFilter.employee = { $in: scoped ? scoped : empIds };
-    const sales = await EmployeeSale.find(saleFilter).select("employee date");
+    const sales = await EmployeeSale.find(saleFilter).select("employee date").lean();
     const saleById = new Map(sales.map((s) => [String(s._id), s]));
     const lines = sales.length
       ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
-          .select("medicineTargatableId drug totalNoOfBoxes")
+          .select("medicineTargatableId drug totalNoOfBoxes").lean()
       : [];
     const real = new Map();
     lines.forEach((l) => {
@@ -234,13 +234,13 @@ export async function getDoctorsReport(req, res) {
     // the doctors to list
     const doctorFilter = { _id: { $in: [...byDoctor.keys()] } };
     if (doctor) doctorFilter._id = byDoctor.has(String(doctor)) ? doctor : { $in: [] };
-    const allDocs = await Doctor.find(doctorFilter).populate("profile", "name");
+    const allDocs = await Doctor.find(doctorFilter).select("firstName lastName uniqueNumber profile isActive isBudgeted createdAt").populate("profile", "name").lean();
     const r2 = (n) => Math.round(n * 100) / 100;
     const rows = allDocs.map((doc) => {
       const d = byDoctor.get(String(doc._id));
       return {
         _id: doc._id,
-        name: doc.name,
+        name: [doc.firstName, doc.lastName].filter(Boolean).join(" "),
         uniqueNumber: doc.uniqueNumber,
         profileName: doc.profile?.name || "—",
         isActive: doc.isActive,
@@ -261,15 +261,15 @@ export async function getDoctorsReport(req, res) {
     const docs = rows.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
     // revenue by division = the REAL pharmacy sales of the division's reps (no estimate needed)
-    const priceById = new Map((await Drug.find({}).select("price")).map((x) => [String(x._id), x.price || 0]));
-    const allSections = await Section.find({ name: /^\d\s*DIVIZION/i });
+    const priceById = new Map((await Drug.find({}).select("price").lean()).map((x) => [String(x._id), x.price || 0]));
+    const allSections = await Section.find({ name: /^\d\s*DIVIZION/i }).select("name head").lean();
     const divisionSummary = await Promise.all(allSections.map(async (sec) => {
       const gids = await Group.find({ section: sec._id }).distinct("_id");
       const eids = (await Employee.find({ group: { $in: gids } }).distinct("_id")).map(String);
       if (sec.head) eids.push(String(sec.head));
       const set = new Set(eids);
-      const ds = await EmployeeSale.find({ employee: { $in: eids }, date: { $gte: new Date(monthFrom.getTime() - 12 * 3600e3), $lte: toDate } }).select("_id");
-      const dl = ds.length ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: ds.map((x) => x._id) } }).select("drug totalNoOfBoxes") : [];
+      const ds = await EmployeeSale.find({ employee: { $in: eids }, date: { $gte: new Date(monthFrom.getTime() - 12 * 3600e3), $lte: toDate } }).select("_id").lean();
+      const dl = ds.length ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: ds.map((x) => x._id) } }).select("drug totalNoOfBoxes").lean() : [];
       const total = dl.reduce((s, l) => s + (l.totalNoOfBoxes || 0) * (priceById.get(String(l.drug)) || 0), 0);
       return { divisionId: sec._id, divisionName: sec.name, totalSalesAmount: r2(total), employees: set.size };
     }));
@@ -318,11 +318,11 @@ export async function getOverview(req, res) {
     const r2 = (n) => Math.round((n || 0) * 100) / 100;
 
     // who belongs to which division
-    const sections = await Section.find({ name: /DIVIZION/i }).select("name head");
-    const groups = await Group.find({}).select("section");
+    const sections = await Section.find({ name: /DIVIZION/i }).select("name head").lean();
+    const groups = await Group.find({}).select("section").lean();
     const groupDiv = new Map(groups.map((g) => [String(g._id), String(g.section || "")]));
     const secName = new Map(sections.map((x) => [String(x._id), x.name]));
-    const emps = await Employee.find({}).select("firstName lastName group isActive");
+    const emps = await Employee.find({}).select("firstName lastName group isActive").lean();
     const empDiv = new Map();
     const empName = new Map();
     emps.forEach((e) => {
@@ -338,13 +338,13 @@ export async function getOverview(req, res) {
     }));
 
     // 1) real sales from pharmacies
-    const prices = new Map((await Drug.find({}).select("name price")).map((d) => [String(d._id), d]));
+    const prices = new Map((await Drug.find({}).select("name price").lean()).map((d) => [String(d._id), d]));
     const saleFilter = { date: { $gte: new Date(from.getTime() - 12 * 3600e3), $lt: new Date(to.getTime() - 12 * 3600e3) } };
     if (scopeFilter) saleFilter.employee = scopeFilter;
-    const sales = await EmployeeSale.find(saleFilter).select("employee date");
+    const sales = await EmployeeSale.find(saleFilter).select("employee date").lean();
     const saleById = new Map(sales.map((x) => [String(x._id), x]));
     const lines = sales.length
-      ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((x) => x._id) } }).select("medicineTargatableId drug totalNoOfBoxes")
+      ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((x) => x._id) } }).select("medicineTargatableId drug totalNoOfBoxes").lean()
       : [];
     const divTotals = new Map(), drugTotals = new Map(), repTotals = new Map();
     lines.forEach((l) => {
@@ -393,6 +393,7 @@ export async function getOverview(req, res) {
       Object.keys(m.byDivision).forEach((k) => { m.byDivision[k] = r2(m.byDivision[k]); });
     });
     const sum = (k) => months.reduce((a, m) => a + (m[k] || 0), 0);
+    const scopeSet = scope ? new Set(scope.map(String)) : null;
     res.json({
       year,
       months,
@@ -402,7 +403,7 @@ export async function getOverview(req, res) {
       totals: {
         sales: r2(sum("sales")), boxes: sum("boxes"), visits: sum("visits"), doctorVisits: sum("doctorVisits"),
         prescriptions: sum("prescriptions"), plannedBudget: r2(sum("plannedBudget")),
-        activeEmployees: emps.filter((e) => e.isActive !== false && (!scope || scope.map(String).includes(String(e._id)))).length,
+        activeEmployees: emps.filter((e) => e.isActive !== false && (!scopeSet || scopeSet.has(String(e._id)))).length,
       },
     });
   } catch (err) {

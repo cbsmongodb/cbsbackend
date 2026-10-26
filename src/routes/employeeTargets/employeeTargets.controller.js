@@ -35,7 +35,7 @@ export async function getAllEmployeeTargets(req, res) {
         .populate("employee", "firstName lastName")
         .sort({ date: 1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum).lean(),
       EmployeeTarget.countDocuments(filter),
     ]);
 
@@ -43,7 +43,7 @@ export async function getAllEmployeeTargets(req, res) {
     const targets = await MedicineTarget.find({
       medicineTargatableType: "EmployeeTarget",
       medicineTargatableId: { $in: targetIds },
-    }).populate("drug", "price");
+    }).populate("drug", "price").lean();
 
     const amountByTarget = new Map();
     targets.forEach((t) => {
@@ -97,7 +97,7 @@ export async function getVisibleDrugsForTarget(req, res) {
       const visibleIds = await getVisibleDrugIds(req.employee);
       filter._id = { $in: visibleIds };
     }
-    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 });
+    const drugs = await Drug.find(filter).select("name price").sort({ name: 1 }).lean();
     res.json(drugs);
   } catch (err) {
     console.error("getVisibleDrugsForTarget failed:", err);
@@ -140,13 +140,13 @@ export async function createEmployeeTarget(req, res) {
 export async function getEmployeeTargetById(req, res) {
   try {
     const target = await EmployeeTarget.findById(req.params.id)
-      .populate("employee", "firstName lastName name");
+      .populate("employee", "firstName lastName name").lean();
     if (!target) return res.status(404).json({ error: "Not found" });
 
     const rows = await MedicineTarget.find({
       medicineTargatableType: "EmployeeTarget",
       medicineTargatableId: target._id,
-    }).populate("drug", "name price");
+    }).populate("drug", "name price").lean();
 
     res.json({
       _id: target._id,

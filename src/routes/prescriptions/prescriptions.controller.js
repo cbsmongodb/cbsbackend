@@ -64,14 +64,18 @@ export async function getAllPrescriptions(req, res) {
         .populate("doctor", "firstName lastName isBudgeted")
         .sort({ date: -1 })
         .skip(skip)
-        .limit(limitNum),
+        .limit(limitNum)
+        .lean(),
       Prescription.countDocuments(filter),
     ]);
 
     const prescriptionIds = docs.map((d) => d._id);
     const drugPrescriptions = await DrugPrescription.find({
       prescription: { $in: prescriptionIds },
-    }).populate("drug", "name");
+    })
+      .select("prescription drug totalNoOfBoxes")
+      .populate("drug", "name")
+      .lean();
 
     const byPrescription = new Map();
     drugPrescriptions.forEach((dp) => {
@@ -163,12 +167,13 @@ export async function getPrescriptionById(req, res) {
   try {
     const prescription = await Prescription.findById(req.params.id)
       .populate("doctor", "firstName lastName uniqueNumber")
-      .populate("employee", "firstName lastName");
+      .populate("employee", "firstName lastName")
+      .lean();
     if (!prescription) return res.status(404).json({ error: "Not found" });
 
     const [drugPrescriptions, activeDrugs] = await Promise.all([
-      DrugPrescription.find({ prescription: prescription._id }).populate("drug", "name"),
-      Drug.find({ isActive: true }).select("name").sort({ name: 1 }),
+      DrugPrescription.find({ prescription: prescription._id }).populate("drug", "name").lean(),
+      Drug.find({ isActive: true }).select("name").sort({ name: 1 }).lean(),
     ]);
 
     res.json({

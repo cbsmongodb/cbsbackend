@@ -15,10 +15,10 @@ const POPULATE = "employee doctor region section group";
 // auto-fills region/section/group from the employee's Group —
 // mirrors Rails' Budget#update_region_group_section_fields
 async function resolveOrgFields(employeeId) {
-  const employee = await Employee.findById(employeeId).populate("group");
+  const employee = await Employee.findById(employeeId).populate("group").lean();
   if (!employee?.group) return { region: null, section: null, group: null };
 
-  const group = await Group.findById(employee.group).populate("region section");
+  const group = await Group.findById(employee.group._id || employee.group).populate("region section").lean();
   return {
     region: group?.region?._id || null,
     section: group?.section?._id || null,
@@ -38,7 +38,7 @@ export async function getAllBudgets(req, res) {
       if (req.query.to) filter.date.$lte = new Date(req.query.to);
     }
 
-    const budgets = await Budget.find(filter).populate(POPULATE).sort({ date: -1 });
+    const budgets = await Budget.find(filter).populate(POPULATE).sort({ date: -1 }).lean();
     res.json(budgets);
   } catch (err) {
     console.error("getAllBudgets failed:", err);
@@ -124,8 +124,8 @@ export async function getBudgetAllotment(req, res) {
     const filter = { employee: employeeId, date: { $gte: startDate, $lte: endDate } };
 
     const [docs, employee] = await Promise.all([
-      Budget.find(filter).populate("doctor", "firstName lastName uniqueNumber").sort({ date: -1 }),
-      Employee.findById(employeeId).select("firstName lastName"),
+      Budget.find(filter).populate("doctor", "firstName lastName uniqueNumber").sort({ date: -1 }).lean(),
+      Employee.findById(employeeId).select("firstName lastName").lean(),
     ]);
 
     const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
@@ -137,7 +137,7 @@ export async function getBudgetAllotment(req, res) {
     const entries = await DoctorEntryItem.find({
       employee: employeeId,
       period: { $gte: monthFrom, $lte: endDate },
-    }).populate("drug", "price");
+    }).populate("drug", "price").lean();
     let totalPrescriptionAmount = 0;
     let totalSalesAmount = 0;
     let totalTargetAmount = 0;
@@ -214,12 +214,12 @@ export async function computeBudgetAmounts(req, res) {
       doctor,
       employee,
       date: { $gte: monthStart, $lte: monthEnd },
-    }).select("_id");
+    }).select("_id").lean();
     const prescriptionIds = prescriptions.map((p) => p._id);
 
     const items = await DrugPrescription.find({
       prescription: { $in: prescriptionIds },
-    }).populate("drug", "price bonus");
+    }).populate("drug", "price bonus").lean();
 
     let prescriptionAmt = 0;
     let salesAmount = 0;
@@ -236,11 +236,11 @@ export async function computeBudgetAmounts(req, res) {
       doctor,
       employee,
       date: { $gte: monthStart, $lte: monthEnd },
-    }).select("_id");
+    }).select("_id").lean();
     const targetRows = await MedicineTarget.find({
       medicineTargatableType: "DoctorTarget",
       medicineTargatableId: { $in: doctorTargets.map((t) => t._id) },
-    }).populate("drug", "price");
+    }).populate("drug", "price").lean();
     let targetAmount = 0;
     targetRows.forEach((t) => {
       targetAmount += (t.totalNoOfBoxes || 0) * (t.drug?.price || 0);
@@ -256,7 +256,7 @@ export async function computeBudgetAmounts(req, res) {
       doctor,
       employee,
       date: { $gte: yearStart, $lte: yearEnd },
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
     const advanceAmount = lastBudget?.advanceAmount || 0;
 
     res.json({

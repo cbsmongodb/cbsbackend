@@ -34,7 +34,7 @@ export async function getAllDoctors(req, res) {
     // division/group filters plug in here once doctors carry those refs
 
     if (!page && !limit) {
-      const doctors = await Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 });
+      const doctors = await Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 }).lean();
       return res.json(doctors);
     }
 
@@ -43,7 +43,7 @@ export async function getAllDoctors(req, res) {
     const skip = (pageNum - 1) * limitNum;
 
     const [docs, total] = await Promise.all([
-      Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum),
+      Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum).lean(),
       Doctor.countDocuments(filter),
     ]);
 
@@ -62,7 +62,7 @@ export async function getAllDoctors(req, res) {
 
 export async function getDoctor(req, res) {
   try {
-    const doctor = await Doctor.findById(req.params.id).populate(POPULATE);
+    const doctor = await Doctor.findById(req.params.id).populate(POPULATE).lean();
     if (!doctor) return res.status(404).json({ error: "Doctor not found" });
     res.json(doctor);
   } catch (err) {
@@ -91,7 +91,7 @@ export async function createDoctor(req, res) {
 
 export async function updateDoctor(req, res) {
   try {
-    const current = await Doctor.findById(req.params.id).select("hospitals");
+    const current = await Doctor.findById(req.params.id).select("hospitals").lean();
     if (!current) return res.status(404).json({ error: "Doctor not found" });
     applyHospitalIds(req.body, current);
     const doctor = await Doctor.findByIdAndUpdate(req.params.id, req.body, {

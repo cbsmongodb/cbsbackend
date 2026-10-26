@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { invalidateCachesOnWrite } from "../utils/cacheBus.js";
 
 const groupSchema = new mongoose.Schema(
   {
@@ -16,5 +17,11 @@ const groupSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// speeds up the most common filters (reports, dashboards, scope lookups)
+groupSchema.index({ section: 1 });
+groupSchema.index({ head: 1 });
+
+invalidateCachesOnWrite(groupSchema);
 
 export default mongoose.model("Group", groupSchema);

@@ -10,4 +10,8 @@ const drugPrescriptionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+drugPrescriptionSchema.index({ prescription: 1 });
+drugPrescriptionSchema.index({ drug: 1 });
+
 export default mongoose.model("DrugPrescription", drugPrescriptionSchema);

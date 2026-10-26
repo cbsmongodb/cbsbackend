@@ -50,7 +50,7 @@ export async function getAllEmployees(req, res) {
     }
 
     if (!page && !limit) {
-      const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 });
+      const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).lean();
       return res.json(employees);
     }
 
@@ -59,7 +59,7 @@ export async function getAllEmployees(req, res) {
     const skip = (pageNum - 1) * limitNum;
 
     const [docs, total] = await Promise.all([
-      Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum),
+      Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).skip(skip).limit(limitNum).lean(),
       Employee.countDocuments(filter),
     ]);
 
@@ -78,7 +78,7 @@ export async function getAllEmployees(req, res) {
 
 export async function getEmployee(req, res) {
   try {
-    const employee = await Employee.findById(req.params.id).populate(POPULATE);
+    const employee = await Employee.findById(req.params.id).populate(POPULATE).lean();
     if (!employee) return res.status(404).json({ error: "Employee not found" });
     res.json(employee);
   } catch (err) {

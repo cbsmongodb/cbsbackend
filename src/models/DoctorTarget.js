@@ -9,4 +9,8 @@ const doctorTargetSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// speeds up the most common filters (reports, dashboards, scope lookups)
+doctorTargetSchema.index({ date: 1 });
+doctorTargetSchema.index({ doctor: 1, employee: 1, date: 1 });
+
 export default mongoose.model("DoctorTarget", doctorTargetSchema);

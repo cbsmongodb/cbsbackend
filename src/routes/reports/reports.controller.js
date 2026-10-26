@@ -37,14 +37,19 @@ export async function getEfficiencyReport(req, res) {
     const plans = await PlanConfiguration.find(planFilter)
       .populate("performer", "firstName lastName")
       .populate("hospital", "name")
-      .populate("pharmacy", "pharmacyName");
+      .populate("pharmacy", "pharmacyName")
+      .select("period performer hospital pharmacy")
+      .lean();
 
     const planIds = plans.map((p) => p._id);
     const planById = new Map(plans.map((p) => [String(p._id), p]));
 
     const pcds = await PlanConfigurationDoctor.find({
       planConfiguration: { $in: planIds },
-    }).populate({ path: "doctor", populate: "profile" });
+    })
+      .select("planConfiguration doctor")
+      .populate({ path: "doctor", select: "firstName lastName profile", populate: { path: "profile", select: "name" } })
+      .lean();
 
     const groups = new Map();
     pcds.forEach((pcd) => {
@@ -88,7 +93,7 @@ export async function getEfficiencyReport(req, res) {
 
 // employees of one division (its groups' members + the division head)
 async function divisionEmployeeIds(sectionId) {
-  const sec = await Section.findById(sectionId).select("head");
+  const sec = await Section.findById(sectionId).select("head").lean();
   const gids = await Group.find({ section: sectionId }).distinct("_id");
   const ids = (await Employee.find({ group: { $in: gids } }).distinct("_id")).map(String);
   if (sec?.head) ids.push(String(sec.head));
@@ -98,7 +103,7 @@ async function divisionEmployeeIds(sectionId) {
 // GET /api/reports/reimbursement/divisions
 export async function getReimbursementDivisions(req, res) {
   try {
-    res.json(await Section.find({ name: /DIVIZION/i }).sort({ name: 1 }).select("name"));
+    res.json(await Section.find({ name: /DIVIZION/i }).sort({ name: 1 }).select("name").lean());
   } catch (err) {
     res.status(500).json({ error: "Server error" });
   }
@@ -142,8 +147,10 @@ export async function getReimbursementReport(req, res) {
 
     const plans = await PlanConfiguration.find(filter)
       .populate("performer", "firstName lastName")
-      .populate({ path: "hospital", populate: "region" })
-      .sort({ iWentAt: 1 });
+      .populate({ path: "hospital", select: "region", populate: { path: "region", select: "name reimbursementAmt" } })
+      .select("period performer hospital")
+      .sort({ iWentAt: 1 })
+      .lean();
 
     const seen = new Map();
     plans.forEach((plan) => {
@@ -199,8 +206,10 @@ export async function exportReimbursementReport(req, res) {
 
     const plans = await PlanConfiguration.find(filter)
       .populate("performer", "firstName lastName")
-      .populate({ path: "hospital", populate: "region" })
-      .sort({ iWentAt: 1 });
+      .populate({ path: "hospital", select: "region", populate: { path: "region", select: "name reimbursementAmt" } })
+      .select("period performer hospital")
+      .sort({ iWentAt: 1 })
+      .lean();
 
     const seen = new Map();
     plans.forEach((plan) => {
@@ -289,14 +298,20 @@ export async function getAttendanceReport(req, res) {
 
     const records = await Attendance.find(filter)
       .populate("employee", "firstName lastName")
-      .sort({ attendanceTime: -1 });
+      .select("employee attendanceTime attendanceType attendanceStatus viaPlan")
+      .sort({ attendanceTime: -1 })
+      .lean();
 
     const standaloneIds = records.filter((r) => !r.viaPlan).map((r) => r._id);
     const planIds = records.filter((r) => r.viaPlan).map((r) => r.viaPlan);
 
     const [standaloneAddresses, planAddresses] = await Promise.all([
-      Address.find({ addressableType: "Attendance", addressableId: { $in: standaloneIds } }),
-      Address.find({ addressableType: "PlanConfiguration", addressableId: { $in: planIds } }),
+      Address.find({ addressableType: "Attendance", addressableId: { $in: standaloneIds } })
+        .select("addressableId cleanAddress")
+        .lean(),
+      Address.find({ addressableType: "PlanConfiguration", addressableId: { $in: planIds } })
+        .select("addressableId addressType cleanAddress")
+        .lean(),
     ]);
 
     const addressByAttendanceId = new Map(
@@ -387,7 +402,8 @@ export async function getStaffPerformanceReport(req, res) {
       .select("firstName lastName")
       .sort({ firstName: 1 })
       .skip((page - 1) * limit)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
     // 2. resolve the date range for the daily-accurate metrics, and whether
     //    the month-only metrics should be computed at all
@@ -433,10 +449,10 @@ export async function getStaffPerformanceReport(req, res) {
         };
 
         if (isMonthMode) {
-          const items = await DoctorEntryItem.find({ employee: emp._id, period: monthStart }).populate(
-            "drug",
-            "price"
-          );
+          const items = await DoctorEntryItem.find({ employee: emp._id, period: monthStart })
+            .select("drug prescription quota sale")
+            .populate("drug", "price")
+            .lean();
           let prescriptionAmount = 0;
           let targetAmount = 0;
           let salesAmount = 0;
