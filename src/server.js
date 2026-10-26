@@ -16,7 +16,10 @@ async function start() {
   const httpServer = http.createServer();
 
   const io = new Server(httpServer, {
-    cors: { origin: process.env.CLIENT_URL, credentials: true },
+    cors: {
+      origin: (process.env.CLIENT_URL || "").split(",").map((x) => x.trim()).filter(Boolean),
+      credentials: true,
+    },
   });
   initLiveFeedSocket(io);
 
