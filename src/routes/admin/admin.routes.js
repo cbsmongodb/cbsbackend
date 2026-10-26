@@ -12,11 +12,11 @@ import { adminScope, rolesScope } from "../../middleware/managerScope.js";
 // each is mounted at its own path in app.js:
 // /api/admin/roles, /api/admin/designations, etc.
 
-function makeRouter(Model, populate = "", scopeKind = null) {
+function makeRouter(Model, populate = "", scopeKind = null, searchFields = ["name"]) {
   const router = express.Router();
   router.use(requireAuth);
   if (scopeKind) router.use(adminScope(scopeKind));
-  const c = crud(Model, populate);
+  const c = crud(Model, populate, searchFields);
   router.get("/", c.getAll);
   router.post("/", c.createOne);
   router.get("/:id", c.getOne);
@@ -89,7 +89,8 @@ roleRouter.delete("/:id", async (req, res) => {
 });
 
 export const roleRoutes = roleRouter;
-export const designationRoutes = makeRouter(Designation);
+// Designation's text field is "position", not "name" (search + ?lite=1 use it)
+export const designationRoutes = makeRouter(Designation, "", null, ["position"]);
 export const groupRoutes = makeRouter(Group, "region section head", "group");
 export const regionRoutes = makeRouter(Region, "parent", "region");
 

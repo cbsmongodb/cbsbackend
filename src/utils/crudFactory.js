@@ -67,6 +67,10 @@ export function createOne(Model) {
       const doc = await Model.create(req.body);
       res.status(201).json(doc);
     } catch (err) {
+      if (err.code === 11000) {
+        const field = Object.keys(err.keyValue || {})[0];
+        return res.status(400).json({ error: `"${err.keyValue?.[field]}" უკვე არსებობს` });
+      }
       if (err.name === "ValidationError") {
         const messages = Object.values(err.errors).map((e) => e.message);
         return res.status(400).json({ error: messages.join(", ") });
@@ -87,6 +91,10 @@ export function updateOne(Model) {
       if (!doc) return res.status(404).json({ error: `${Model.modelName} not found` });
       res.json(doc);
     } catch (err) {
+      if (err.code === 11000) {
+        const field = Object.keys(err.keyValue || {})[0];
+        return res.status(400).json({ error: `"${err.keyValue?.[field]}" უკვე არსებობს` });
+      }
       if (err.name === "ValidationError") {
         const messages = Object.values(err.errors).map((e) => e.message);
         return res.status(400).json({ error: messages.join(", ") });
