@@ -116,11 +116,15 @@ export async function getReimbursementReport(req, res) {
   try {
     const { from, to, employee } = req.query;
 
-    const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
+    // only hospital visits can be reimbursed (pharmacy-only plans have no region)
+    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null } };
     if (from || to) {
       filter.period = {};
       if (from) filter.period.$gte = dayStart(from);
       if (to) filter.period.$lte = dayEnd(to);
+    } else {
+      // no dates picked -> last 7 days, never the whole history
+      filter.period = { $gte: new Date(Date.now() - 7 * 86400000) };
     }
     if (employee) filter.performer = employee;
 
@@ -186,11 +190,15 @@ export async function exportReimbursementReport(req, res) {
   try {
     const { from, to, employee } = req.query;
 
-    const filter = { status: { $in: ["i_went", "i_left", "completed"] } };
+    // only hospital visits can be reimbursed (pharmacy-only plans have no region)
+    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null } };
     if (from || to) {
       filter.period = {};
       if (from) filter.period.$gte = dayStart(from);
       if (to) filter.period.$lte = dayEnd(to);
+    } else {
+      // no dates picked -> last 7 days, never the whole history
+      filter.period = { $gte: new Date(Date.now() - 7 * 86400000) };
     }
     if (employee) filter.performer = employee;
 
