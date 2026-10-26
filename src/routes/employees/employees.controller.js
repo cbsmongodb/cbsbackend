@@ -49,6 +49,12 @@ export async function getAllEmployees(req, res) {
       filter._id = { $in: visibleIds };
     }
 
+    // ?lite=1 -> just names for dropdowns (no role / group / designation)
+    if (req.query.lite) {
+      const employees = await Employee.find(filter).select("firstName lastName isActive").sort({ firstName: 1 }).lean();
+      return res.json(employees);
+    }
+
     if (!page && !limit) {
       const employees = await Employee.find(filter).populate(POPULATE).sort({ firstName: 1 }).lean();
       return res.json(employees);

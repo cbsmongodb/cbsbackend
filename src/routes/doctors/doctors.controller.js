@@ -33,6 +33,12 @@ export async function getAllDoctors(req, res) {
     }
     // division/group filters plug in here once doctors carry those refs
 
+    // ?lite=1 -> just names for dropdowns (no populate) — ~8,500 doctors stay small
+    if (req.query.lite) {
+      const doctors = await Doctor.find(filter).select("firstName lastName uniqueNumber").sort({ firstName: 1 }).lean();
+      return res.json(doctors);
+    }
+
     if (!page && !limit) {
       const doctors = await Doctor.find(filter).populate(POPULATE).sort({ firstName: 1 }).lean();
       return res.json(doctors);
