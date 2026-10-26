@@ -14,6 +14,12 @@ export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
 
       const filter = { ...buildFilter(), ...(req.scopeFilter || {}) };
 
+      // ?lite=1 -> only the name field(s), no populate — for dropdowns
+      if (req.query.lite && !page && !limit) {
+        const docs = await Model.find(filter).select(searchFields.join(" ")).sort({ createdAt: -1 }).lean();
+        return res.json(docs);
+      }
+
       if (!page && !limit) {
         const docs = await Model.find(filter).populate(defaultPopulate).sort({ createdAt: -1 }).lean();
         return res.json(docs);

@@ -20,6 +20,9 @@ export async function getEfficiencyReport(req, res) {
       planFilter.period = {};
       if (from) planFilter.period.$gte = dayStart(from);
       if (to) planFilter.period.$lte = dayEnd(to);
+    } else {
+      // no dates picked -> last 7 days, never the whole history (15k+ visits)
+      planFilter.period = { $gte: new Date(Date.now() - 7 * 86400000) };
     }
     if (employee) planFilter.performer = employee;
     if (hospital) planFilter.hospital = hospital;
