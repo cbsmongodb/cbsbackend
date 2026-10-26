@@ -294,6 +294,9 @@ export async function getAttendanceReport(req, res) {
       filter.attendanceTime = {};
       if (req.query.from) filter.attendanceTime.$gte = dayStart(req.query.from);
       if (req.query.to) filter.attendanceTime.$lte = dayEnd(req.query.to);
+    } else {
+      // no dates picked -> last 7 days, never the whole history
+      filter.attendanceTime = { $gte: new Date(Date.now() - 7 * 86400000) };
     }
     if (req.query.employee) filter.employee = req.query.employee;
 
