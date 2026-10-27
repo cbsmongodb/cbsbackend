@@ -1423,7 +1423,7 @@ const roles = await Role.find({}).lean();
 const tea = await Employee.findOne({ email: "finance@cbs.ge" }).select("role").lean();
 for (const r of roles) {
   const name = r.name.toLowerCase().trim();
-  if (!["division manager", "director", "finance manager", "office manager"].includes(name) && String(r._id) !== String(tea?.role)) continue;
+  if (!["director"].includes(name) && String(r._id) !== String(tea?.role)) continue;
   const role = await Role.findById(r._id);
   role.privileges.set("timesheet_report", ON);
   role.markModified("privileges");
