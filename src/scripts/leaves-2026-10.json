@@ -1,0 +1,20 @@
+{
+  "createdByEmail": "lbogveradze12@gmail.com",
+  "leaves": [
+    {"name": "თამუნა გოცირიძე", "email": "gotciridzetamuna@mail.ru", "type": "paid", "from": "2026-10-27", "to": "2026-10-27"},
+    {"name": "ქეთევან ჯალაღონია", "email": "kjalaghonia@yahoo.com", "type": "paid", "from": "2026-10-13", "to": "2026-10-13"},
+    {"name": "ლიზა გულაშვილი", "email": "gulashvililizi@gmail.com", "type": "paid", "from": "2026-10-26", "to": "2026-10-27"},
+    {"name": "მირანდა ჯანჯღავა", "email": "mirandajanjghava@gmail.com", "type": "paid", "from": "2026-10-15", "to": "2026-10-16"},
+    {"name": "ელისო ლეკიშვილი", "email": "e.lekishvili@cbs.ge", "type": "unpaid", "from": "2026-10-23", "to": "2026-10-23"},
+    {"name": "თამარ ჯინჯოლავა", "email": "tamunajinjolava@yahoo.com", "type": "sick", "from": "2026-10-05", "to": "2026-10-12"},
+    {"name": "თამარ გოდერძიშვილი", "email": "t.goderdzishvili@cbs.ge", "type": "paid", "from": "2026-10-12", "to": "2026-10-12"},
+    {"name": "მეგი თენაძე", "email": "m.tenadze@cbs.ge", "type": "paid", "from": "2026-10-13", "to": "2026-10-13"},
+    {"name": "ნათია გაგუა", "email": "n.gagua@cbs.ge", "type": "unpaid", "from": "2026-10-12", "to": "2026-11-12"},
+    {"name": "ნათია ბადრიძე", "email": "natiabadridze@gmail.com", "type": "sick", "from": "2026-10-19", "to": "2026-10-22"},
+    {"name": "ლიზი ბოგვერაძე", "email": "lbogveradze12@gmail.com", "type": "paid", "from": "2026-10-12", "to": "2026-10-12"},
+    {"name": "ნინო თორდია", "email": "tordia-84@mail.ru", "type": "paid", "from": "2026-10-06", "to": "2026-10-06"},
+    {"name": "მარიამ ჯანიაშვილი", "email": "janiashvili_m@mail.ru", "type": "paid", "from": "2026-10-09", "to": "2026-10-09"},
+    {"name": "სალომე ლომიძე", "email": "t.tessa2021@gmail.com", "type": "paid", "from": "2026-10-05", "to": "2026-10-06"},
+    {"name": "მაკა ოდიშარია", "email": "makaodisharia91@gmail.com", "type": "paid", "from": "2026-10-06", "to": "2026-10-07"}
+  ]
+}

@@ -75,7 +75,13 @@ export async function getLeavePayrollReport(req, res) {
     }
 
     const employees = await Employee.find({ _id: { $in: [...byEmp.keys()] } }).select("firstName lastName group isActive").lean();
-    const groups = await Group.find({ _id: { $in: employees.map((e) => e.group).filter(Boolean) } }).select("section").lean();
+    const empIds = employees.map((e) => e._id);
+    const groups = await Group.find({
+      $or: [{ _id: { $in: employees.map((e) => e.group).filter(Boolean) } }, { members: { $in: empIds } }],
+    }).select("section members").lean();
+    // people with no "group" set on their profile but listed as a member of a group
+    const memberSection = new Map();
+    groups.forEach((g) => (g.members || []).forEach((m) => { if (g.section && !memberSection.has(String(m))) memberSection.set(String(m), String(g.section)); }));
     const sections = await Section.find({}).select("name head").lean();
     const sectionById = new Map(sections.map((s) => [String(s._id), s]));
     const sectionByHead = new Map(sections.filter((s) => s.head).map((s) => [String(s.head), s]));
@@ -83,7 +89,9 @@ export async function getLeavePayrollReport(req, res) {
 
     const divisions = new Map();
     for (const emp of employees) {
-      const secId = groupSection.get(String(emp.group)) || (sectionByHead.get(String(emp._id))?._id ? String(sectionByHead.get(String(emp._id))._id) : null);
+      const secId = groupSection.get(String(emp.group))
+        || memberSection.get(String(emp._id))
+        || (sectionByHead.get(String(emp._id))?._id ? String(sectionByHead.get(String(emp._id))._id) : null);
       if (req.query.division && secId !== String(req.query.division)) continue;
       const sec = secId ? sectionById.get(secId) : null;
       const dKey = sec ? String(sec._id) : "none";
