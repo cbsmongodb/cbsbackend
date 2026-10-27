@@ -11,6 +11,7 @@ import Employee from "../../models/Employee.js";
 import Group from "../../models/Group.js";
 import Section from "../../models/Section.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { createCache } from "../../utils/cacheBus.js";
 import { georgianHolidays } from "../../utils/georgianHolidays.js";
 import { buildTimesheetXlsx, MONTHS_KA, FORM_CAPACITY } from "../../utils/timesheetXlsx.js";
 
@@ -36,15 +37,20 @@ function parseMonth(s) {
 }
 
 // which timesheets this person may see: everything for director / finance /
-// office; a division manager only the timesheets of his own division
+// office; a division manager only the timesheets of his own division.
+// Cached for a minute (and dropped at once when employees / groups / divisions change).
+const scopeCache = createCache(60_000);
 async function allowedSheetFilter(emp) {
   const scope = await getScopeEmployeeIds(emp);
   if (!scope) return {};
-  const groupIds = await Employee.find({ _id: { $in: scope } }).distinct("group");
-  const sectionIds = [
-    ...(await Group.find({ _id: { $in: groupIds } }).distinct("section")),
-    ...(await Section.find({ head: emp._id }).distinct("_id")),
-  ].filter(Boolean);
+  const sectionIds = await scopeCache(String(emp._id), async () => {
+    const groupIds = await Employee.find({ _id: { $in: scope } }).distinct("group");
+    const [fromGroups, headed] = await Promise.all([
+      Group.find({ _id: { $in: groupIds } }).distinct("section"),
+      Section.find({ head: emp._id }).distinct("_id"),
+    ]);
+    return [...fromGroups, ...headed].filter(Boolean);
+  });
   return { section: { $in: sectionIds } };
 }
 async function loadSheet(req, key) {
@@ -67,8 +73,11 @@ async function restDaysBetween(from, to) {
   return new Set(rows.map((r) => dayKey(new Date(r.date.getTime() + 12 * 3600e3))));
 }
 
+const holidayCache = new Map();
+const holidaysOf = (y) => (holidayCache.has(y) ? holidayCache.get(y) : holidayCache.set(y, georgianHolidays(y)).get(y));
+
 function monthDays(year, month, restDays) {
-  const holidays = georgianHolidays(year);
+  const holidays = holidaysOf(year);
   const count = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return Array.from({ length: count }, (_, i) => {
     const key = `${year}-${pad(month)}-${pad(i + 1)}`;
@@ -79,27 +88,35 @@ function monthDays(year, month, restDays) {
 }
 
 // first working day of the next month — the usual "document date"
-async function defaultDocDate(year, month) {
+function defaultDocDate(year, month, restDays) {
   const ny = month === 12 ? year + 1 : year, nm = month === 12 ? 1 : month + 1;
-  const from = new Date(Date.UTC(ny, nm - 1, 1));
-  const days = monthDays(ny, nm, await restDaysBetween(from, new Date(Date.UTC(ny, nm, 0))));
+  const days = monthDays(ny, nm, restDays);
   const d = days.find((x) => !x.weekend && !x.holiday) || days[0];
   return `${pad(d.day)}.${pad(nm)}.${ny}`;
 }
 
-async function computeGrid(sheet, year, month) {
+// the month's calendar: one RestDay query covers this month and the next one (document date)
+async function monthCalendar(year, month) {
+  const from = new Date(Date.UTC(year, month - 1, 1));
+  const restDays = await restDaysBetween(from, new Date(Date.UTC(year, month + 1, 0)));
+  const days = monthDays(year, month, restDays);
+  return { days, workingDays: days.filter((d) => !d.weekend && !d.holiday).length, docDate: defaultDocDate(year, month, restDays) };
+}
+
+// several timesheets at once (the ZIP of all 8): 3 queries in total, not 3 per timesheet
+async function computeGrids(sheets, year, month) {
   const from = new Date(Date.UTC(year, month - 1, 1));
   const to = new Date(Date.UTC(year, month, 0, 23, 59, 59));
-  const days = monthDays(year, month, await restDaysBetween(from, to));
-  const workingDays = days.filter((d) => !d.weekend && !d.holiday).length;
+  const { days, workingDays, docDate } = await monthCalendar(year, month);
 
-  const members = await TimesheetMember.find({ sheet: sheet.key }).sort({ order: 1, _id: 1 })
-    .populate("employee", "firstName lastName email isActive").lean();
-  const empIds = members.map((m) => m.employee?._id).filter(Boolean);
+  const allMembers = await TimesheetMember.find({ sheet: { $in: sheets.map((s) => s.key) } }).sort({ order: 1, _id: 1 })
+    .populate("employee", "firstName lastName isActive").lean();
+  const empIds = allMembers.map((m) => m.employee?._id).filter(Boolean);
   const [entries, cells] = await Promise.all([
     LeaveEntry.find({ employee: { $in: empIds }, startDate: { $lte: to }, endDate: { $gte: from }, status: { $in: ["approved", null] } })
       .select("employee type startDate endDate days").lean(),
-    TimesheetCell.find({ member: { $in: members.map((m) => m._id) }, date: { $gte: days[0].key, $lte: days[days.length - 1].key } }).lean(),
+    TimesheetCell.find({ member: { $in: allMembers.map((m) => m._id) }, date: { $gte: days[0].key, $lte: days[days.length - 1].key } })
+      .select("member date value").lean(),
   ]);
   const leaveBy = new Map();
   entries.forEach((e) => leaveDays(e).forEach((d) => {
@@ -109,7 +126,7 @@ async function computeGrid(sheet, year, month) {
   }));
   const cellBy = new Map(cells.map((c) => [`${c.member}|${c.date}`, c.value]));
 
-  const rows = members.map((m) => {
+  const toRow = (m) => {
     const work = new Set(m.workDays?.length ? m.workDays : [1, 2, 3, 4, 5]);
     const leaves = (m.employee && leaveBy.get(String(m.employee._id))) || new Map();
     const values = [], auto = [], edited = [];
@@ -127,14 +144,15 @@ async function computeGrid(sheet, year, month) {
       values, auto, edited,
       totalDays: nums.length, totalHours: nums.reduce((s, n) => s + n, 0),
     };
-  });
-
-  return {
-    sheet: { _id: sheet._id, key: sheet.key, title: sheet.title, head: sheet.head, responsible: sheet.responsible },
-    year, month, monthName: MONTHS_KA[month - 1], days, workingDays,
-    docDate: await defaultDocDate(year, month), capacity: FORM_CAPACITY, members: rows,
   };
+
+  return sheets.map((sheet) => ({
+    sheet: { _id: sheet._id, key: sheet.key, title: sheet.title, head: sheet.head, responsible: sheet.responsible },
+    year, month, monthName: MONTHS_KA[month - 1], days, workingDays, docDate, capacity: FORM_CAPACITY,
+    members: allMembers.filter((m) => m.sheet === sheet.key).map(toRow),
+  }));
 }
+const computeGrid = async (sheet, year, month) => (await computeGrids([sheet], year, month))[0];
 
 const fail = (res, err, where) => { console.error(`${where} failed:`, err); res.status(500).json({ error: "Server error" }); };
 
@@ -204,9 +222,8 @@ export async function exportSheet(req, res) {
     if (req.query.sheet === "all") {
       const sheets = await TimesheetSheet.find(await allowedSheetFilter(req.employee)).sort({ order: 1 }).lean();
       const zip = new JSZip();
-      for (const s of sheets) {
-        const grid = await computeGrid(s, year, month);
-        if (grid.members.length) zip.file(fileName(grid), await toXlsx(grid, docDate));
+      for (const grid of await computeGrids(sheets, year, month)) {
+        if (grid.members.length) zip.file(fileName(grid), await toXlsx(grid, docDate), { compression: "STORE" });
       }
       const buf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
       res.setHeader("Content-Type", "application/zip");
