@@ -160,6 +160,32 @@ export async function createPlanning(req, res) {
   }
 }
 
+// When a manager moves a visit's status BACK (e.g. "completed" -> "i_went"
+// after an accidental check-out), remove what that step had recorded:
+// the check-out time, its attendance row and its location. Moving back to
+// "planned" also removes the check-in. The visit then shows the check-out
+// (or check-in) button again for the employee.
+async function undoVisitMarks(plan, newStatus) {
+  const wasLeft = ["completed", "i_left"].includes(plan.status);
+  const wasIn = wasLeft || plan.status === "i_went";
+  const undoLeft = wasLeft && ["i_went", "planned"].includes(newStatus);
+  const undoIn = wasIn && newStatus === "planned";
+  if (undoLeft) {
+    plan.iLeftAt = undefined;
+    await Promise.all([
+      Attendance.deleteMany({ viaPlan: plan._id, attendanceType: "checkout" }),
+      Address.deleteMany({ addressableType: "PlanConfiguration", addressableId: plan._id, addressType: "performer_i_left_location" }),
+    ]);
+  }
+  if (undoIn) {
+    plan.iWentAt = undefined;
+    await Promise.all([
+      Attendance.deleteMany({ viaPlan: plan._id, attendanceType: "checkin" }),
+      Address.deleteMany({ addressableType: "PlanConfiguration", addressableId: plan._id, addressType: "performer_i_went_location" }),
+    ]);
+  }
+}
+
 export async function updatePlanning(req, res) {
   try {
     const plan = await PlanConfiguration.findById(req.params.id);
@@ -176,6 +202,9 @@ export async function updatePlanning(req, res) {
       return res.status(400).json({ error: "Only plans scheduled for today can be edited" });
     }
 
+    if (req.body.status && req.body.status !== plan.status) {
+      await undoVisitMarks(plan, req.body.status);
+    }
     Object.assign(plan, req.body);
     await plan.save();
     const populated = await plan.populate(POPULATE);
