@@ -29,6 +29,7 @@ import planningsRoutes from "./routes/planAndPerform/plannings.routes.js";
 import tasksRoutes from "./routes/planAndPerform/tasks.routes.js";
 import efficiencyRoutes from "./routes/reports/efficiency.routes.js";
 import reimbursementRoutes from "./routes/reports/reimbursement.routes.js";
+import timesheetRoutes from "./routes/reports/timesheet.routes.js";
 import leavePayrollRoutes from "./routes/reports/leavePayroll.routes.js";
 import attendancesReportRoutes from "./routes/reports/attendances.routes.js";
 import prescriptionsReportRoutes from "./routes/reports/prescriptionsReport.routes.js";
@@ -153,6 +154,7 @@ app.use(
     reimbursementRoutes
   );
   app.use("/api/reports/leave-payroll", requirePermission("leave_payroll_report"), leavePayrollRoutes);
+  app.use("/api/reports/timesheet", requirePermission("timesheet_report"), timesheetRoutes);
   app.use("/api/reports/prescriptions", requirePermission("prescriptions_report"), prescriptionsReportRoutes);
   app.use("/api/reports/attendances", requireAnyPermission(["attendance_report", "attendances"]), attendancesReportRoutes);
   app.use(
