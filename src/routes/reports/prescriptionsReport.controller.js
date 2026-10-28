@@ -37,7 +37,12 @@ export async function getPrescriptionsReport(req, res) {
     };
     if (req.query.employee) filter.employee = req.query.employee;
 
-    const scopeIds = await getScopeEmployeeIds(req.employee);
+    // ownOnly: a representative sees only the prescriptions they entered,
+    // even if they are also set as head of some group
+    const ownOnly = (req.employee?.role?.name || "").toLowerCase().trim() === "representative";
+    if (ownOnly) filter.employee = req.employee._id;
+
+    const scopeIds = ownOnly ? null : await getScopeEmployeeIds(req.employee);
     if (scopeIds) {
       const allowed = new Set(scopeIds.map(String));
       if (filter.employee) {
