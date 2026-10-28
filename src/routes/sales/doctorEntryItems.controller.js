@@ -7,7 +7,7 @@ import EmployeeSale from "../../models/EmployeeSale.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import DrugBonus from "../../models/DrugBonus.js";
 import Drug from "../../models/Drug.js";
-import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { getScopeEmployeeIds, canSeeEmployee } from "../../utils/groupVisibility.js";
 
 function normalizeToMonthStart(dateLike) {
   let value = dateLike;
@@ -77,7 +77,7 @@ async function bonusesForPeriod(drugIds, period) {
   return map;
 }
 
-async function recalculateForPeriod(employeeId, period) {
+export async function recalculateForPeriod(employeeId, period) {
   const items = await DoctorEntryItem.find({ employee: employeeId, period }).lean();
   if (items.length === 0) return;
 
@@ -335,6 +335,10 @@ export async function submitEntries(req, res) {
 
 export async function updateEntryItem(req, res) {
   try {
+    const owner = await DoctorEntryItem.findById(req.params.id).select("employee").lean();
+    if (!owner) return res.status(404).json({ error: "Entry not found" });
+    if (!(await canSeeEmployee(req.employee, owner.employee))) return res.status(403).json({ error: "Forbidden" });
+    delete req.body.employee;
     const item = await DoctorEntryItem.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
@@ -356,6 +360,9 @@ export async function updateEntryItem(req, res) {
 
 export async function deleteEntryItem(req, res) {
   try {
+    const owner = await DoctorEntryItem.findById(req.params.id).select("employee").lean();
+    if (!owner) return res.status(404).json({ error: "Entry not found" });
+    if (!(await canSeeEmployee(req.employee, owner.employee))) return res.status(403).json({ error: "Forbidden" });
     const item = await DoctorEntryItem.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ error: "Entry not found" });
 
@@ -377,6 +384,7 @@ export async function deleteEntries(req, res) {
     if (!employee || !period) {
       return res.status(400).json({ error: "employee and period are required" });
     }
+    if (!(await canSeeEmployee(req.employee, employee))) return res.status(403).json({ error: "Forbidden" });
     if (doctorIds.length === 0 && drugIds.length === 0) {
       return res.status(400).json({ error: "Select at least one doctor row or drug to delete" });
     }
