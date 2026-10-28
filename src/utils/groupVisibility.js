@@ -156,19 +156,14 @@ export async function getVisibleDrugIds(requester) {
 }
 
 async function computeVisibleDrugIds(requester) {
-  const headGroups = await getVisibleGroups(requester);
-  if (headGroups.length > 0) {
-    const ids = new Set();
-    headGroups.forEach((g) => (g.drugs || []).forEach((d) => ids.add(String(d))));
-    return Array.from(ids);
-  }
-
-  if (requester.group) {
-    const memberGroup = await Group.findById(requester.group).select("drugs").lean();
-    if (memberGroup) {
-      return (memberGroup.drugs || []).map(String);
-    }
-  }
-
-  return [];
+  // union of: groups they lead + their own group's drugs too (Employee.group)
+  // + any group that lists them in members[] — a rep who is also set as head
+  // of some group, or is listed only in members[], still sees their group
+  const ids = new Set();
+  const add = (g) => (g?.drugs || []).forEach((d) => ids.add(String(d)));
+  (await getVisibleGroups(requester)).forEach(add);
+  const or = [{ members: requester._id }];
+  if (requester.group) or.push({ _id: requester.group?._id || requester.group });
+  (await Group.find({ $or: or }).select("drugs").lean()).forEach(add);
+  return Array.from(ids);
 }
