@@ -10,7 +10,7 @@ import express from "express";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import { employeeFromRequest } from "../../middleware/authEmployee.js";
-import { canSeeEmployee } from "../../utils/groupVisibility.js";
+import { canSeeEmployee, getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 import { recalculateForPeriod } from "./doctorEntryItems.controller.js";
 
 const router = express.Router();
@@ -55,10 +55,22 @@ router.get("/", async (req, res) => {
   try {
     const period = monthStart(req.query.period);
     if (!period) return res.status(400).json({ error: "period must be MM/YYYY" });
-    const employee = req.query.employee || req.employee._id;
-    if (!(await canSeeEmployee(req.employee, employee))) return res.status(403).json({ error: "Forbidden" });
+    // allMode: ?employee=all -> everyone the requester may see
+    // (admin / director: all; division & product manager: their division;
+    //  group manager: their group; a representative: only themselves)
+    const allMode = req.query.employee === "all";
+    let employee;
+    if (allMode) {
+      const isRep = (req.employee?.role?.name || "").toLowerCase().trim() === "representative";
+      const scope = isRep ? [req.employee._id] : await getScopeEmployeeIds(req.employee);
+      employee = scope ? { $in: scope } : { $exists: true };
+    } else {
+      employee = req.query.employee || req.employee._id;
+      if (!(await canSeeEmployee(req.employee, employee))) return res.status(403).json({ error: "Forbidden" });
+    }
     const items = await DoctorEntryItem.find({ employee, period })
-      .select("doctor drug hospital quota prescription updatedAt")
+      .select("employee doctor drug hospital quota prescription updatedAt")
+      .populate("employee", "firstName lastName")
       .populate("doctor", "firstName lastName")
       .populate("drug", "name")
       .populate("hospital", "name")
