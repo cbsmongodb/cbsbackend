@@ -7,7 +7,10 @@ import { getVisibleGroups, getVisibleEmployeeIds, getScopeEmployeeIds } from "..
 // Division Manager / Group Manager are "scoped managers": every admin list
 // they open is limited to their own division (or group), and every write
 // is checked so they can't touch people/groups outside it.
-const SCOPED_ROLES = new Set(["division manager", "group manager"]);
+const SCOPED_ROLES = new Set(["division manager", "group manager", "product manager"]);
+// these may only EDIT the groups they see (no new groups, no deleting) and
+// can't move a group to another division / region or change its head
+const EDIT_ONLY_ROLES = new Set(["group manager", "product manager"]);
 
 // roles a scoped manager may never hand out (would let them escalate
 // themselves or someone else to see everything)
@@ -77,6 +80,12 @@ export function adminScope(kind) {
       }
 
       if (kind !== "group") return forbid(res, "ამის შეცვლის უფლება არ გაქვთ");
+      if (EDIT_ONLY_ROLES.has((req.employee?.role?.name || "").toLowerCase().trim())) {
+        if (req.method !== "PUT" || !id) return forbid(res, "ჯგუფის მხოლოდ რედაქტირება შეგიძლიათ");
+        if (!allowed.includes(id)) return forbid(res, "ეს ჯგუფი სხვა დივიზიონს ეკუთვნის");
+        if (req.body) { delete req.body.section; delete req.body.region; delete req.body.head; }
+        return next();
+      }
       if (req.method === "POST" && id) return forbid(res, "ამის შეცვლის უფლება არ გაქვთ");
       if (id && !allowed.includes(id)) return forbid(res, "ეს ჯგუფი სხვა დივიზიონს ეკუთვნის");
 
