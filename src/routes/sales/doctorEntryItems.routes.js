@@ -10,6 +10,7 @@ import {
   setCoefficientOverride,
   deleteCoefficientOverride,
   getVisitCounts,
+  getBudgetSums,
 } from "./doctorEntryItems.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -19,6 +20,7 @@ router.use(requireAuth);
 router.get("/", getListing);
 router.get("/snapshot", getDoctorSnapshot);
 router.get("/visit-counts", getVisitCounts);
+router.get("/budget-sums", getBudgetSums);
 router.post("/submit", submitEntries);
 router.put("/:id", updateEntryItem);
 router.delete("/item/:id", deleteEntryItem);

@@ -21,6 +21,8 @@ const doctorEntryItemSchema = new mongoose.Schema(
     coefficient: { type: Number, default: 0 },
 
     issuedBudget: { type: Number, default: 0 },
+    // "budget" = filled from the Budgets page (kept in sync), "manual" = typed in
+    issuedBudgetSource: { type: String, enum: ["budget", "manual"] },
     plannedBudget: { type: Number, default: 0 },
     totalBudget: { type: Number, default: 0 }, // prescription * budget * coefficient
     budgetCalculation: { type: Number, default: 0 },

@@ -8,6 +8,7 @@ import DoctorTarget from "../../models/DoctorTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import "../../models/Drug.js";
+import { syncIssuedBudgetSafe } from "../../utils/budgetSync.js";
 import { getScopeEmployeeIds, applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
 
 const OTHER_DIVISION = { error: "ეს ბიუჯეტი სხვა დივიზიონს ეკუთვნის" };
@@ -60,6 +61,7 @@ export async function createBudget(req, res) {
 
     // Rails also flips doctor.isBudgeted = true on save
     await Doctor.findByIdAndUpdate(req.body.doctor, { isBudgeted: true });
+    await syncIssuedBudgetSafe(budget);
 
     const populated = await budget.populate(POPULATE);
     res.status(201).json(populated);
@@ -75,7 +77,7 @@ export async function createBudget(req, res) {
 
 export async function updateBudget(req, res) {
   try {
-    const current = await Budget.findById(req.params.id).select("employee").lean();
+    const current = await Budget.findById(req.params.id).select("employee doctor date").lean();
     if (!current) return res.status(404).json({ error: "Budget not found" });
     if (!(await canSeeEmployee(req.employee, current.employee))) return res.status(403).json(OTHER_DIVISION);
     if (req.body.employee && !(await canSeeEmployee(req.employee, req.body.employee))) {
@@ -91,6 +93,7 @@ export async function updateBudget(req, res) {
       { new: true, runValidators: true }
     ).populate(POPULATE);
     if (!budget) return res.status(404).json({ error: "Budget not found" });
+    await syncIssuedBudgetSafe(current, { employee: budget.employee?._id || budget.employee, doctor: budget.doctor?._id || budget.doctor, date: budget.date });
     res.json(budget);
   } catch (err) {
     console.error("updateBudget failed:", err);
@@ -100,10 +103,11 @@ export async function updateBudget(req, res) {
 
 export async function deleteBudget(req, res) {
   try {
-    const budget = await Budget.findById(req.params.id).select("employee").lean();
+    const budget = await Budget.findById(req.params.id).select("employee doctor date").lean();
     if (!budget) return res.status(404).json({ error: "Budget not found" });
     if (!(await canSeeEmployee(req.employee, budget.employee))) return res.status(403).json(OTHER_DIVISION);
     await Budget.findByIdAndDelete(req.params.id);
+    await syncIssuedBudgetSafe(budget);
     res.json({ success: true });
   } catch (err) {
     console.error("deleteBudget failed:", err);

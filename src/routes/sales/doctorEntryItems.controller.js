@@ -7,6 +7,7 @@ import EmployeeSale from "../../models/EmployeeSale.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import DrugBonus from "../../models/DrugBonus.js";
 import Drug from "../../models/Drug.js";
+import { budgetSumsByDoctor } from "../../utils/budgetSync.js";
 import { getScopeEmployeeIds, canSeeEmployee } from "../../utils/groupVisibility.js";
 
 function normalizeToMonthStart(dateLike) {
@@ -259,6 +260,23 @@ export async function submitEntries(req, res) {
     }
 
     const periodDate = normalizeToMonthStart(period);
+    // issued budget: typed number stays ("manual"); empty -> sum of this month's budgets
+    const budgetSums = await budgetSumsByDoctor(employee, { y: periodDate.getFullYear(), m: periodDate.getMonth() });
+    // issuedOnlyFromBudgets: the issued budget is never typed on this form any more —
+    // it comes from the Budgets page; a number someone typed earlier stays as it is
+    const existingIssued = new Map(
+      (await DoctorEntryItem.find({ employee, period: periodDate }).select("doctor issuedBudget issuedBudgetSource").lean())
+        .map((i) => [String(i.doctor), i])
+    );
+    const issuedFor = (entry) => {
+      const fromBudgets = budgetSums[String(entry.doctorId)] || 0;
+      const old = existingIssued.get(String(entry.doctorId));
+      const typedEarlier = old && old.issuedBudget && old.issuedBudgetSource !== "budget";
+      // same value on every drug line of the doctor (a newly added drug too)
+      if (typedEarlier) return { issuedBudget: old.issuedBudget, issuedBudgetSource: "manual" };
+      if (fromBudgets) return { issuedBudget: fromBudgets, issuedBudgetSource: "budget" };
+      return { issuedBudget: 0 };
+    };
     const bonus = await bonusesForPeriod(
       doctorEntries.flatMap((e) => (e.drugs || []).map((d) => d.drugId)).filter(Boolean),
       periodDate
@@ -291,7 +309,7 @@ export async function submitEntries(req, res) {
             period: periodDate,
             bank: entry.bank,
             visits: entry.visits || "",
-            issuedBudget: entry.issuedBudget || 0,
+            ...issuedFor(entry),
             quota: drugRow.quota || 0,
             prescription: drugRow.prescription || 0,
             // sale / budget: only when the form sent it (new rows don't -> stored values stay)
@@ -474,6 +492,22 @@ export async function deleteCoefficientOverride(req, res) {
     res.json({ success: true });
   } catch (err) {
     console.error("deleteCoefficientOverride failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/doctor-entry-items/budget-sums?employee=&period=MM/YYYY
+// -> { doctorId: paid sum of this month's budgets } (fills "issued budget")
+export async function getBudgetSums(req, res) {
+  try {
+    const { employee, period } = req.query;
+    const [mm, yyyy] = String(period || "").split("/").map(Number);
+    if (!employee || !mm || !yyyy) return res.status(400).json({ error: "employee and period (MM/YYYY) are required" });
+    const scopeIds = await getScopeEmployeeIds(req.employee);
+    if (scopeIds && !scopeIds.some((id) => String(id) === String(employee))) return res.json({});
+    res.json(await budgetSumsByDoctor(employee, { y: yyyy, m: mm - 1 }));
+  } catch (err) {
+    console.error("getBudgetSums failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
