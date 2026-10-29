@@ -1,3 +1,4 @@
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import Doctor from "../../models/Doctor.js";
 
 const POPULATE = "profile doctorCategory hospitals.hospital pharmacies";
@@ -27,9 +28,8 @@ export async function getAllDoctors(req, res) {
     // matches the filters shown on the Doctors list: division, group, period
     const filter = {};
     if (search && search.trim()) {
-      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(escaped, "i");
-      filter.$or = [{ firstName: regex }, { lastName: regex }, { uniqueNumber: regex }];
+      // several words in any order, Georgian letters find Latin names
+      Object.assign(filter, nameSearchFilter(search, ["firstName", "lastName", "uniqueNumber", "phoneNumber", "email"]));
     }
     // division/group filters plug in here once doctors carry those refs
 
