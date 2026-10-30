@@ -17,6 +17,7 @@ import DoctorEntrySummary from "../../models/DoctorEntrySummary.js";
 import { employeeFromRequest } from "../../middleware/authEmployee.js";
 import { canSeeEmployee, getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 import { recalculateForPeriod } from "./doctorEntryItems.controller.js";
+import { moveEntries } from "../../utils/moveEntries.js";
 
 const router = express.Router();
 
@@ -150,6 +151,24 @@ async function pagedList(req, res, { employee, period }) {
     totals: { doctors: t.groups, lines: t.lines, rx: t.rx, employees: (t.emps || []).length },
   });
 }
+
+// POST /api/my-entries/move { employee?, doctor?, from: "MM/YYYY", to: "MM/YYYY" }
+// moves a doctor's lines (or all lines of the month) to another month
+router.post("/move", async (req, res) => {
+  try {
+    const parse = (p) => { const m = String(p || "").match(/^(\d{1,2})\/(\d{4})$/); return m ? { y: +m[2], m: +m[1] } : null; };
+    const from = parse(req.body.from), to = parse(req.body.to);
+    if (!from || !to) return res.status(400).json({ error: "from / to must be MM/YYYY" });
+    if (from.y === to.y && from.m === to.m) return res.status(400).json({ error: "same month" });
+    const employee = req.body.employee || req.employee._id;
+    if (!(await mayChange(req.employee, employee, "update"))) return res.status(403).json({ error: "Forbidden" });
+    const r = await moveEntries({ employee, doctor: req.body.doctor || null, from, to });
+    res.json({ moved: r.moved, clashes: r.clashes.length });
+  } catch (err) {
+    console.error("my-entries move failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 router.put("/:id", async (req, res) => {
   try {
