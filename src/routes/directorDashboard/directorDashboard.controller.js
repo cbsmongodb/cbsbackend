@@ -297,6 +297,13 @@ export async function getDoctorsReport(req, res) {
 
 // GET /api/director-dashboard/overview?year=2026
 // Year at a glance: real sales (pharmacies) per month and division, visits, prescriptions, budgets, top drugs / reps.
+// fastOverview: the heavy counting is done inside MongoDB (aggregations instead of
+// loading every sale / visit into memory) and the finished answer is kept for a
+// few minutes per user scope + year (?fresh=1 forces a new count).
+const overviewCache = new Map();
+const OVERVIEW_TTL_NOW = 5 * 60 * 1000;      // current year: 5 min
+const OVERVIEW_TTL_PAST = 6 * 60 * 60 * 1000; // past years: 6 h
+
 export async function getOverview(req, res) {
   try {
     const { default: Employee } = await import("../../models/Employee.js");
@@ -309,103 +316,128 @@ export async function getOverview(req, res) {
     const { default: PlanConfigurationDoctor } = await import("../../models/PlanConfigurationDoctor.js");
     const { getScopeEmployeeIds } = await import("../../utils/groupVisibility.js");
 
-    const year = Number(req.query.year) || new Date(Date.now() + 4 * 3600e3).getUTCFullYear();
-    const from = new Date(`${year}-01-01T00:00:00+04:00`);
-    const to = new Date(`${year + 1}-01-01T00:00:00+04:00`);
-    const monthOf = (d) => new Date(new Date(d).getTime() + 12 * 3600e3).getUTCMonth(); // 0..11, Georgian
+    const nowYear = new Date(Date.now() + 4 * 3600e3).getUTCFullYear();
+    const year = Number(req.query.year) || nowYear;
     const scope = await getScopeEmployeeIds(req.employee);
-    const scopeFilter = scope ? { $in: scope } : undefined;
-    const r2 = (n) => Math.round((n || 0) * 100) / 100;
-
-    // who belongs to which division
-    const sections = await Section.find({ name: /DIVIZION/i }).select("name head").lean();
-    const groups = await Group.find({}).select("section").lean();
-    const groupDiv = new Map(groups.map((g) => [String(g._id), String(g.section || "")]));
-    const secName = new Map(sections.map((x) => [String(x._id), x.name]));
-    const emps = await Employee.find({}).select("firstName lastName group isActive").lean();
-    const empDiv = new Map();
-    const empName = new Map();
-    emps.forEach((e) => {
-      empName.set(String(e._id), `${e.firstName || ""} ${e.lastName || ""}`.trim());
-      const sid = groupDiv.get(String(e.group || ""));
-      empDiv.set(String(e._id), secName.get(sid) || null);
-    });
-    sections.forEach((x) => { if (x.head) empDiv.set(String(x.head), x.name); });
-
-    const months = Array.from({ length: 12 }, (_, i) => ({
-      month: `${year}-${String(i + 1).padStart(2, "0")}`,
-      sales: 0, boxes: 0, visits: 0, doctorVisits: 0, prescriptions: 0, plannedBudget: 0, byDivision: {},
-    }));
-
-    // 1) real sales from pharmacies
-    const prices = new Map((await Drug.find({}).select("name price").lean()).map((d) => [String(d._id), d]));
-    const saleFilter = { date: { $gte: new Date(from.getTime() - 12 * 3600e3), $lt: new Date(to.getTime() - 12 * 3600e3) } };
-    if (scopeFilter) saleFilter.employee = scopeFilter;
-    const sales = await EmployeeSale.find(saleFilter).select("employee date").lean();
-    const saleById = new Map(sales.map((x) => [String(x._id), x]));
-    const lines = sales.length
-      ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((x) => x._id) } }).select("medicineTargatableId drug totalNoOfBoxes").lean()
-      : [];
-    const divTotals = new Map(), drugTotals = new Map(), repTotals = new Map();
-    lines.forEach((l) => {
-      const sale = saleById.get(String(l.medicineTargatableId));
-      if (!sale) return;
-      const drug = prices.get(String(l.drug));
-      const boxes = l.totalNoOfBoxes || 0;
-      const amount = boxes * (drug?.price || 0);
-      const m = months[monthOf(sale.date)];
-      m.sales += amount; m.boxes += boxes;
-      const div = empDiv.get(String(sale.employee)) || "—";
-      m.byDivision[div] = (m.byDivision[div] || 0) + amount;
-      divTotals.set(div, (divTotals.get(div) || 0) + amount);
-      const dk = drug?.name || "—";
-      const dt = drugTotals.get(dk) || { name: dk, amount: 0, boxes: 0 };
-      dt.amount += amount; dt.boxes += boxes; drugTotals.set(dk, dt);
-      const rk = String(sale.employee);
-      repTotals.set(rk, (repTotals.get(rk) || 0) + amount);
-    });
-
-    // 2) visits (completed) + doctors seen
-    const planFilter = { period: { $gte: from, $lt: to }, status: { $in: ["i_went", "i_left", "completed"] } };
-    if (scopeFilter) planFilter.performer = scopeFilter;
-    const plans = await PlanConfiguration.find(planFilter).select("_id period").lean();
-    const planMonth = new Map(plans.map((x) => [String(x._id), monthOf(x.period)]));
-    plans.forEach((x) => { months[monthOf(x.period)].visits += 1; });
-    if (plans.length) {
-      const counts = await PlanConfigurationDoctor.aggregate([
-        { $match: { planConfiguration: { $in: plans.map((x) => x._id) } } },
-        { $group: { _id: "$planConfiguration", n: { $sum: 1 } } },
-      ]);
-      counts.forEach((c) => { const mi = planMonth.get(String(c._id)); if (mi !== undefined) months[mi].doctorVisits += c.n; });
+    const cacheKey = `${year}|${scope ? [...scope].map(String).sort().join(",") : "all"}`;
+    const ttl = year < nowYear ? OVERVIEW_TTL_PAST : OVERVIEW_TTL_NOW;
+    const hit = overviewCache.get(cacheKey);
+    if (hit && !req.query.fresh && Date.now() - hit.at < ttl) {
+      return res.json({ ...(await hit.value), cachedAt: new Date(hit.at).toISOString() });
     }
 
-    // 3) prescriptions + doctors' budgets (data entry)
-    const deMatch = { period: { $gte: new Date(Date.UTC(year, 0, 1) - 86400000), $lt: new Date(Date.UTC(year + 1, 0, 1) - 86400000) } };
-    if (scope) deMatch.employee = { $in: scope.map((id) => (typeof id === "string" ? new (Doctor.base.Types.ObjectId)(id) : id)) };
-    const de = await DoctorEntryItem.aggregate([
-      { $match: deMatch },
-      { $group: { _id: { $month: { date: "$period", timezone: "+04:00" } }, rx: { $sum: "$prescription" }, budget: { $sum: "$totalBudget" } } },
-    ]);
-    de.forEach((x) => { const m = months[(x._id || 1) - 1]; if (m) { m.prescriptions += x.rx || 0; m.plannedBudget += x.budget || 0; } });
+    const compute = async () => {
+      const from = new Date(`${year}-01-01T00:00:00+04:00`);
+      const to = new Date(`${year + 1}-01-01T00:00:00+04:00`);
+      const HALF = 12 * 3600e3;
+      const OID = Doctor.base.Types.ObjectId;
+      const scopeIds = scope ? scope.map((id) => (typeof id === "string" ? new OID(id) : id)) : null;
+      const r2 = (n) => Math.round((n || 0) * 100) / 100;
+      // Georgian month 1..12 of a date field (+12h covers both midnight styles)
+      const monthExpr = (field) => ({ $month: { $add: [field, HALF] } });
 
-    months.forEach((m) => {
-      m.sales = r2(m.sales); m.plannedBudget = r2(m.plannedBudget);
-      Object.keys(m.byDivision).forEach((k) => { m.byDivision[k] = r2(m.byDivision[k]); });
-    });
-    const sum = (k) => months.reduce((a, m) => a + (m[k] || 0), 0);
-    const scopeSet = scope ? new Set(scope.map(String)) : null;
-    res.json({
-      year,
-      months,
-      divisions: [...divTotals.entries()].map(([name, amount]) => ({ name, amount: r2(amount) })).sort((a, b) => b.amount - a.amount),
-      topDrugs: [...drugTotals.values()].sort((a, b) => b.amount - a.amount).slice(0, 10).map((d) => ({ ...d, amount: r2(d.amount) })),
-      topReps: [...repTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, amount]) => ({ name: empName.get(id) || "—", amount: r2(amount) })),
-      totals: {
-        sales: r2(sum("sales")), boxes: sum("boxes"), visits: sum("visits"), doctorVisits: sum("doctorVisits"),
-        prescriptions: sum("prescriptions"), plannedBudget: r2(sum("plannedBudget")),
-        activeEmployees: emps.filter((e) => e.isActive !== false && (!scopeSet || scopeSet.has(String(e._id)))).length,
-      },
-    });
+      // who belongs to which division
+      const [sections, groups, emps, drugs] = await Promise.all([
+        Section.find({ name: /DIVIZION/i }).select("name head").lean(),
+        Group.find({}).select("section").lean(),
+        Employee.find({}).select("firstName lastName group isActive").lean(),
+        Drug.find({}).select("name price").lean(),
+      ]);
+      const groupDiv = new Map(groups.map((g) => [String(g._id), String(g.section || "")]));
+      const secName = new Map(sections.map((x) => [String(x._id), x.name]));
+      const empDiv = new Map();
+      const empName = new Map();
+      emps.forEach((e) => {
+        empName.set(String(e._id), `${e.firstName || ""} ${e.lastName || ""}`.trim());
+        empDiv.set(String(e._id), secName.get(groupDiv.get(String(e.group || ""))) || null);
+      });
+      sections.forEach((x) => { if (x.head) empDiv.set(String(x.head), x.name); });
+      const prices = new Map(drugs.map((d) => [String(d._id), d]));
+
+      const months = Array.from({ length: 12 }, (_, i) => ({
+        month: `${year}-${String(i + 1).padStart(2, "0")}`,
+        sales: 0, boxes: 0, visits: 0, doctorVisits: 0, prescriptions: 0, plannedBudget: 0, byDivision: {},
+      }));
+
+      const saleMatch = { date: { $gte: new Date(from.getTime() - HALF), $lt: new Date(to.getTime() - HALF) } };
+      if (scopeIds) saleMatch.employee = { $in: scopeIds };
+      const planMatch = { period: { $gte: from, $lt: to }, status: { $in: ["i_went", "i_left", "completed"] } };
+      if (scopeIds) planMatch.performer = { $in: scopeIds };
+      const deMatch = { period: { $gte: new Date(Date.UTC(year, 0, 1) - 86400000), $lt: new Date(Date.UTC(year + 1, 0, 1) - 86400000) } };
+      if (scopeIds) deMatch.employee = { $in: scopeIds };
+
+      const [saleRows, visitRows, de] = await Promise.all([
+        // 1) real sales from pharmacies: boxes per month + employee + drug
+        EmployeeSale.aggregate([
+          { $match: saleMatch },
+          { $lookup: { from: MedicineTarget.collection.name, localField: "_id", foreignField: "medicineTargatableId", as: "l" } },
+          { $unwind: "$l" },
+          { $match: { "l.medicineTargatableType": "EmployeeSale" } },
+          { $group: { _id: { m: monthExpr("$date"), e: "$employee", d: "$l.drug" }, boxes: { $sum: "$l.totalNoOfBoxes" } } },
+        ]).allowDiskUse(true),
+        // 2) completed visits + doctors seen, per month
+        PlanConfiguration.aggregate([
+          { $match: planMatch },
+          { $lookup: { from: PlanConfigurationDoctor.collection.name, localField: "_id", foreignField: "planConfiguration", as: "d" } },
+          { $group: { _id: monthExpr("$period"), visits: { $sum: 1 }, doctorVisits: { $sum: { $size: "$d" } } } },
+        ]).allowDiskUse(true),
+        // 3) prescriptions + doctors' budgets (data entry)
+        DoctorEntryItem.aggregate([
+          { $match: deMatch },
+          { $group: { _id: { $month: { date: "$period", timezone: "+04:00" } }, rx: { $sum: "$prescription" }, budget: { $sum: "$totalBudget" } } },
+        ]),
+      ]);
+
+      const divTotals = new Map(), drugTotals = new Map(), repTotals = new Map();
+      saleRows.forEach((r) => {
+        const m = months[(r._id.m || 1) - 1];
+        if (!m) return;
+        const drug = prices.get(String(r._id.d));
+        const boxes = r.boxes || 0;
+        const amount = boxes * (drug?.price || 0);
+        m.sales += amount; m.boxes += boxes;
+        const div = empDiv.get(String(r._id.e)) || "—";
+        m.byDivision[div] = (m.byDivision[div] || 0) + amount;
+        divTotals.set(div, (divTotals.get(div) || 0) + amount);
+        const dk = drug?.name || "—";
+        const dt = drugTotals.get(dk) || { name: dk, amount: 0, boxes: 0 };
+        dt.amount += amount; dt.boxes += boxes; drugTotals.set(dk, dt);
+        const rk = String(r._id.e);
+        repTotals.set(rk, (repTotals.get(rk) || 0) + amount);
+      });
+      visitRows.forEach((v) => { const m = months[(v._id || 1) - 1]; if (m) { m.visits += v.visits; m.doctorVisits += v.doctorVisits; } });
+      de.forEach((x) => { const m = months[(x._id || 1) - 1]; if (m) { m.prescriptions += x.rx || 0; m.plannedBudget += x.budget || 0; } });
+
+      months.forEach((m) => {
+        m.sales = r2(m.sales); m.plannedBudget = r2(m.plannedBudget);
+        Object.keys(m.byDivision).forEach((k) => { m.byDivision[k] = r2(m.byDivision[k]); });
+      });
+      const sum = (k) => months.reduce((a, m) => a + (m[k] || 0), 0);
+      const scopeSet = scope ? new Set(scope.map(String)) : null;
+      return {
+        year,
+        months,
+        divisions: [...divTotals.entries()].map(([name, amount]) => ({ name, amount: r2(amount) })).sort((a, b) => b.amount - a.amount),
+        topDrugs: [...drugTotals.values()].sort((a, b) => b.amount - a.amount).slice(0, 10).map((d) => ({ ...d, amount: r2(d.amount) })),
+        topReps: [...repTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, amount]) => ({ name: empName.get(id) || "—", amount: r2(amount) })),
+        totals: {
+          sales: r2(sum("sales")), boxes: sum("boxes"), visits: sum("visits"), doctorVisits: sum("doctorVisits"),
+          prescriptions: sum("prescriptions"), plannedBudget: r2(sum("plannedBudget")),
+          activeEmployees: emps.filter((e) => e.isActive !== false && (!scopeSet || scopeSet.has(String(e._id)))).length,
+        },
+      };
+    };
+
+    const value = compute();
+    const at = Date.now();
+    if (overviewCache.size > 200) overviewCache.clear();
+    overviewCache.set(cacheKey, { at, value });
+    try {
+      res.json({ ...(await value), cachedAt: new Date(at).toISOString() });
+    } catch (err) {
+      overviewCache.delete(cacheKey);
+      throw err;
+    }
   } catch (err) {
     console.error("getOverview failed:", err);
     res.status(500).json({ error: "Server error" });
