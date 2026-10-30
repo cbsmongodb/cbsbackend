@@ -13,6 +13,8 @@ const budgetSchema = new mongoose.Schema(
     targetAmount: { type: Number, default: 0 },
     salesAmount: { type: Number, default: 0 },
     advanceAmount: { type: Number, default: 0 },
+    // id in the old CRM (global.cbs.ge) — for imported budgets, so re-imports skip them
+    oldId: { type: String, index: true },
 
     // denormalized from employee.group at save time (Rails does this via
     // an after_save callback) — fill these in the controller on create

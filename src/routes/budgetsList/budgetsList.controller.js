@@ -3,7 +3,42 @@ import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
 import Group from "../../models/Group.js";
 import { applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
-import { syncIssuedBudgetSafe } from "../../utils/budgetSync.js";
+import { syncIssuedBudgetSafe, monthOfDate } from "../../utils/budgetSync.js";
+import DoctorEntryItem from "../../models/DoctorEntryItem.js";
+import "../../models/Drug.js";
+
+// fromEntries: amounts the budget row shows, worked out from what the rep
+// entered on "Prescription entry" for that employee + doctor + month:
+//   prescription = Σ prescriptions × drug price
+//   sales        = Σ prescriptions × drug price × coefficient (real pharmacy sales / prescriptions)
+//   target       = Σ doctor plan × drug price
+//   payable      = the doctor's planned budget
+// A number stored on the budget itself (e.g. imported from the old CRM) wins.
+const ymKey = (d) => { const m = monthOfDate(d); return `${m.y}-${m.m}`; };
+async function amountsFromEntries(docs) {
+  const out = new Map();
+  const withDate = docs.filter((d) => d.date && d.employee && d.doctor);
+  if (!withDate.length) return out;
+  const times = withDate.map((d) => +new Date(d.date));
+  const from = new Date(Math.min(...times) - 40 * 86400000);
+  const to = new Date(Math.max(...times) + 40 * 86400000);
+  const items = await DoctorEntryItem.find({
+    employee: { $in: [...new Set(withDate.map((d) => String(d.employee._id || d.employee)))] },
+    doctor: { $in: [...new Set(withDate.map((d) => String(d.doctor._id || d.doctor)))] },
+    period: { $gte: from, $lte: to },
+  }).select("employee doctor period quota prescription coefficient plannedBudget drug").populate("drug", "price").lean();
+  for (const i of items) {
+    const k = `${i.employee}|${i.doctor}|${ymKey(i.period)}`;
+    const a = out.get(k) || { prescriptionAmt: 0, salesAmount: 0, targetAmount: 0, payableAmt: 0 };
+    const price = i.drug?.price || 0;
+    a.prescriptionAmt += (i.prescription || 0) * price;
+    a.salesAmount += (i.prescription || 0) * price * (i.coefficient || 0);
+    a.targetAmount += (i.quota || 0) * price;
+    a.payableAmt = Math.max(a.payableAmt, i.plannedBudget || 0);
+    out.set(k, a);
+  }
+  return out;
+}
 
 // GET /api/budgets-list?search=&doctor=&employee=&section=&group=&fromDate=&toDate=&isActive=&page=&limit=
 export async function getAllBudgets(req, res) {
@@ -62,6 +97,13 @@ export async function getAllBudgets(req, res) {
       Budget.countDocuments(filter),
     ]);
 
+    const calc = await amountsFromEntries(docs);
+    const pick = (d, field) => {
+      if (d[field]) return d[field];
+      if (!d.date || !d.employee || !d.doctor) return 0;
+      const a = calc.get(`${d.employee._id || d.employee}|${d.doctor._id || d.doctor}|${ymKey(d.date)}`);
+      return a ? a[field] : 0;
+    };
     const rows = docs.map((d) => ({
       _id: d._id,
       date: d.date,
@@ -74,12 +116,12 @@ export async function getAllBudgets(req, res) {
       sectionName: d.section?.name || "—",
       groupName: d.group?.name || "—",
       regionName: d.region?.name || "—",
-      payableAmt: Math.round((d.payableAmt || 0) * 100) / 100,
+      payableAmt: Math.round(pick(d, "payableAmt") * 100) / 100,
       paidAmount: Math.round((d.paidAmount || 0) * 100) / 100,
       advanceAmount: Math.round((d.advanceAmount || 0) * 100) / 100,
-      targetAmount: Math.round((d.targetAmount || 0) * 100) / 100,
-      prescriptionAmt: Math.round((d.prescriptionAmt || 0) * 100) / 100,
-      salesAmount: Math.round((d.salesAmount || 0) * 100) / 100,
+      targetAmount: Math.round(pick(d, "targetAmount") * 100) / 100,
+      prescriptionAmt: Math.round(pick(d, "prescriptionAmt") * 100) / 100,
+      salesAmount: Math.round(pick(d, "salesAmount") * 100) / 100,
       isActive: d.isActive,
     }));
 
