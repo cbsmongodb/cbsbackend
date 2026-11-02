@@ -67,6 +67,8 @@ export function adminScope(kind) {
   return async (req, res, next) => {
     try {
       if (!isScopedManager(req.employee)) return next();
+      // regions: everyone may SEE all of them (changing stays admin-only)
+      if (kind === "region" && req.method === "GET") return next();
       const scope = await getManagerScope(req.employee);
       const allowed = scope[key];
       const id = firstSegment(req);
