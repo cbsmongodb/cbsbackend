@@ -23,7 +23,17 @@ export async function getAllEmployeeTargets(req, res) {
 
     const filter = {};
     if (employee) filter.employee = employee;
-    if (fromDate && toDate) {
+    // monthFilter: ?month=YYYY-MM -> that month (+-12h so both midnight styles fit)
+    const mm = String(req.query.month || "").match(/^(\d{4})-(\d{2})$/);
+    if (mm) {
+      const H12 = 12 * 3600e3;
+      const y = +mm[1];
+      const m = +mm[2] - 1;
+      filter.date = {
+        $gte: new Date(Date.UTC(y, m, 1) - H12),
+        $lt: new Date(Date.UTC(y, m + 1, 1) - H12),
+      };
+    } else if (fromDate && toDate) {
       const to = new Date(toDate);
       to.setHours(23, 59, 59, 999);
       filter.date = { $gte: new Date(fromDate), $lte: to };
