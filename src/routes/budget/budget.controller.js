@@ -50,6 +50,21 @@ export async function getAllBudgets(req, res) {
   }
 }
 
+// GET /api/budgets/:id - one budget (for the edit form)
+export async function getBudgetById(req, res) {
+  try {
+    const budget = await Budget.findById(req.params.id).lean();
+    if (!budget) return res.status(404).json({ error: "Budget not found" });
+    if (!(await canSeeEmployee(req.employee, budget.employee))) {
+      return res.status(403).json(OTHER_DIVISION);
+    }
+    res.json(budget);
+  } catch (err) {
+    console.error("getBudgetById failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 // POST /api/budgets
 export async function createBudget(req, res) {
   try {

@@ -6,6 +6,7 @@ import {
   deleteBudget,
   getBudgetAllotment,
   computeBudgetAmounts,
+  getBudgetById,
 } from "./budget.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -15,6 +16,7 @@ router.use(requireAuth);
 router.get("/allotment", getBudgetAllotment);
 router.get("/compute-amounts", computeBudgetAmounts);
 router.get("/", getAllBudgets);
+router.get("/:id", getBudgetById);
 router.post("/", createBudget);
 router.put("/:id", updateBudget);
 router.delete("/:id", deleteBudget);
