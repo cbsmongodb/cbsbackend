@@ -2,7 +2,12 @@ import Role from "../models/Role.js";
 import Employee from "../models/Employee.js";
 import Section from "../models/Section.js";
 import LeaveEntry from "../models/LeaveEntry.js";
-import { getVisibleGroups, getVisibleEmployeeIds, getScopeEmployeeIds } from "../utils/groupVisibility.js";
+import {
+  getVisibleGroups,
+  getVisibleEmployeeIds,
+  getScopeEmployeeIds,
+  getDivisionGroups,
+} from "../utils/groupVisibility.js";
 
 // Division Manager / Group Manager are "scoped managers": every admin list
 // they open is limited to their own division (or group), and every write
@@ -41,8 +46,9 @@ export function isScopedManager(employee) {
 }
 
 // ids of the sections / groups / regions this manager is allowed to see
-export async function getManagerScope(employee) {
-  const groups = await getVisibleGroups(employee);
+export async function getManagerScope(employee, { division = false } = {}) {
+  // division: Groups / Sections pages -> a group manager sees the whole division
+  const groups = division ? await getDivisionGroups(employee) : await getVisibleGroups(employee);
   const groupIds = new Set();
   const sectionIds = new Set();
   const regionIds = new Set();
@@ -74,7 +80,7 @@ export function adminScope(kind) {
       if (!isScopedManager(req.employee)) return next();
       // regions: everyone may SEE all of them (changing stays admin-only)
       if (kind === "region" && req.method === "GET") return next();
-      const scope = await getManagerScope(req.employee);
+      const scope = await getManagerScope(req.employee, { division: true });
       const allowed = scope[key];
       const id = firstSegment(req);
 

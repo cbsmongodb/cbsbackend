@@ -145,6 +145,36 @@ async function computeVisibleEmployeeIds(requester) {
   return Array.from(ids);
 }
 
+// groupManagerDivision: a Group Manager sees ALL groups of their division on
+// the Groups page and all of its drugs (their PEOPLE stay just their group)
+const isGroupManager = (r) => {
+  const n = (r?.role?.name || "").toLowerCase().trim();
+  return n === "group manager" || n.startsWith("group manager ");
+};
+
+export async function getDivisionGroups(requester) {
+  if (!isGroupManager(requester)) return getVisibleGroups(requester);
+  const groups = await groupsCache("div|" + scopeKey(requester), () => computeDivisionGroups(requester));
+  return [...groups];
+}
+
+async function computeDivisionGroups(requester) {
+  const own = await getVisibleGroups(requester);
+  const ownIds = own.map((g) => g._id);
+  if (requester.group) ownIds.push(requester.group?._id || requester.group);
+  const sectionIds = new Set();
+  const ownDocs = await Group.find({ _id: { $in: ownIds } }).select("section").lean();
+  ownDocs.forEach((g) => g.section && sectionIds.add(String(g.section)));
+  const linked = await Section.find({ groups: { $in: ownIds } }).select("_id").lean();
+  linked.forEach((s) => sectionIds.add(String(s._id)));
+  if (!sectionIds.size) return own;
+  const secs = await Section.find({ _id: { $in: [...sectionIds] } }).select("groups").lean();
+  const listed = secs.flatMap((s) => s.groups || []);
+  return Group.find({
+    $or: [{ section: { $in: [...sectionIds] } }, { _id: { $in: listed } }],
+  }).lean();
+}
+
 // Drug IDs this requester is allowed to see — union of their group(s)'
 // drug lists. Section/Group heads see every drug across their visible
 // groups; a regular member sees just their own group's drugs (found via
@@ -161,7 +191,7 @@ async function computeVisibleDrugIds(requester) {
   // of some group, or is listed only in members[], still sees their group
   const ids = new Set();
   const add = (g) => (g?.drugs || []).forEach((d) => ids.add(String(d)));
-  (await getVisibleGroups(requester)).forEach(add);
+  (await getDivisionGroups(requester)).forEach(add);
   const or = [{ members: requester._id }];
   if (requester.group) or.push({ _id: requester.group?._id || requester.group });
   (await Group.find({ $or: or }).select("drugs").lean()).forEach(add);
