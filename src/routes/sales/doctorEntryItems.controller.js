@@ -307,7 +307,7 @@ export async function submitEntries(req, res) {
             drug: drugRow.drugId,
             hospital: entry.hospitalId || null,
             period: periodDate,
-            bank: entry.bank,
+            bank: entry.bank || undefined, // empty = not chosen (no enum error)
             visits: entry.visits || "",
             ...issuedFor(entry),
             quota: drugRow.quota || 0,
