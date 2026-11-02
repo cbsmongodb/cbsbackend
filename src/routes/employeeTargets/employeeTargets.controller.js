@@ -2,7 +2,19 @@ import EmployeeTarget from "../../models/EmployeeTarget.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import Drug from "../../models/Drug.js";
-import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
+import {
+  getVisibleDrugIds,
+  seesEverything,
+  getScopeEmployeeIds,
+  canSeeEmployee,
+} from "../../utils/groupVisibility.js";
+
+// managers only see / change targets of their own people
+async function targetAllowed(req, id) {
+  const t = await EmployeeTarget.findById(id).select("employee").lean();
+  if (!t) return "missing";
+  return (await canSeeEmployee(req.employee, t.employee)) ? "ok" : "no";
+}
 
 // GET /api/employee-targets?search=&employee=&fromDate=&toDate=&page=&limit=
 export async function getAllEmployeeTargets(req, res) {
@@ -24,6 +36,19 @@ export async function getAllEmployeeTargets(req, res) {
         $or: [{ firstName: regex }, { lastName: regex }],
       }).distinct("_id");
       filter.employee = filter.employee || { $in: matchingEmployees };
+    }
+
+    // scope: managers see only their people's targets
+    const scope = await getScopeEmployeeIds(req.employee);
+    if (scope) {
+      const allowed = new Set(scope.map(String));
+      const cur = filter.employee;
+      if (!cur) filter.employee = { $in: scope };
+      else if (typeof cur === "object" && cur.$in) {
+        filter.employee = { $in: cur.$in.filter((x) => allowed.has(String(x))) };
+      } else if (!allowed.has(String(cur))) {
+        filter.employee = { $in: [] };
+      }
     }
 
     const pageNum = Math.max(parseInt(page) || 1, 1);
@@ -74,6 +99,9 @@ export async function getAllEmployeeTargets(req, res) {
 
 export async function deleteEmployeeTarget(req, res) {
   try {
+    const st = await targetAllowed(req, req.params.id);
+    if (st === "missing") return res.status(404).json({ error: "Not found" });
+    if (st === "no") return res.status(403).json({ error: "Forbidden" });
     await MedicineTarget.deleteMany({
       medicineTargatableType: "EmployeeTarget",
       medicineTargatableId: req.params.id,
@@ -117,6 +145,9 @@ export async function createEmployeeTarget(req, res) {
     if (list.length === 0) {
       return res.status(400).json({ error: "at least one drug with boxes is required" });
     }
+    if (!(await canSeeEmployee(req.employee, employee))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     const target = await EmployeeTarget.create({ employee, date: new Date(date) });
 
@@ -142,6 +173,9 @@ export async function getEmployeeTargetById(req, res) {
     const target = await EmployeeTarget.findById(req.params.id)
       .populate("employee", "firstName lastName name").lean();
     if (!target) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, target.employee))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
     const rows = await MedicineTarget.find({
       medicineTargatableType: "EmployeeTarget",
@@ -174,6 +208,11 @@ export async function updateEmployeeTarget(req, res) {
     const list = Array.isArray(items) ? items.filter((i) => i.drug && Number(i.totalNoOfBoxes) > 0) : [];
     if (list.length === 0) {
       return res.status(400).json({ error: "at least one drug with boxes is required" });
+    }
+    const st = await targetAllowed(req, req.params.id);
+    if (st === "missing") return res.status(404).json({ error: "Not found" });
+    if (st === "no" || !(await canSeeEmployee(req.employee, employee))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const target = await EmployeeTarget.findByIdAndUpdate(
