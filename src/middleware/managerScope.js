@@ -11,6 +11,11 @@ const SCOPED_ROLES = new Set(["division manager", "group manager", "product mana
 // these may only EDIT the groups they see (no new groups, no deleting) and
 // can't move a group to another division / region or change its head
 const EDIT_ONLY_ROLES = new Set(["group manager", "product manager"]);
+// "Group Manager - Tamuna Gotciridze" (a personal copy) = still a Group Manager
+const roleIn = (set, emp) => {
+  const n = (emp?.role?.name || "").toLowerCase().trim();
+  return [...set].some((r) => n === r || n.startsWith(r + " "));
+};
 
 // roles a scoped manager may never hand out (would let them escalate
 // themselves or someone else to see everything)
@@ -32,7 +37,7 @@ const firstSegment = (req) => req.path.split("/").filter(Boolean)[0] || null;
 const toId = (v) => (v && typeof v === "object" && v._id ? String(v._id) : v ? String(v) : "");
 
 export function isScopedManager(employee) {
-  return SCOPED_ROLES.has((employee?.role?.name || "").toLowerCase().trim());
+  return roleIn(SCOPED_ROLES, employee);
 }
 
 // ids of the sections / groups / regions this manager is allowed to see
@@ -82,7 +87,7 @@ export function adminScope(kind) {
       }
 
       if (kind !== "group") return forbid(res, "ამის შეცვლის უფლება არ გაქვთ");
-      if (EDIT_ONLY_ROLES.has((req.employee?.role?.name || "").toLowerCase().trim())) {
+      if (roleIn(EDIT_ONLY_ROLES, req.employee)) {
         if (req.method !== "PUT" || !id) return forbid(res, "ჯგუფის მხოლოდ რედაქტირება შეგიძლიათ");
         if (!allowed.includes(id)) return forbid(res, "ეს ჯგუფი სხვა დივიზიონს ეკუთვნის");
         if (req.body) { delete req.body.section; delete req.body.region; delete req.body.head; }
