@@ -142,12 +142,26 @@ export async function getPlanning(req, res) {
 
 export async function createPlanning(req, res) {
   try {
-    const plan = await PlanConfiguration.create({
+    const data = {
       ...req.body,
       author: req.body.author || req.employee._id,
       performer: ownPlanningsOnly(req.employee) ? req.employee._id : req.body.performer || req.employee._id,
       status: req.body.status || "planned",
-    });
+    };
+    delete data.planNumber;
+    // two people saving at the same second can get the same "PL<n>" ->
+    // planNumberRetry: just take the next free number and try again
+    let plan;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        plan = await PlanConfiguration.create(data);
+        break;
+      } catch (e) {
+        const dup = e?.code === 11000 && e?.keyPattern?.planNumber;
+        if (!dup || attempt >= 5) throw e;
+        await new Promise((r) => setTimeout(r, 50 + Math.random() * 150));
+      }
+    }
     const populated = await plan.populate(POPULATE);
     res.status(201).json(populated);
   } catch (err) {
