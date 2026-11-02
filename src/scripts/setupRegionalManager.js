@@ -94,14 +94,34 @@ for (const p of people) {
 }
 
 const rep = (await Role.find({})).find((r) => ["representative", "წარმომადგენელი"].includes(r.name.toLowerCase().trim()));
-const mgrRole = await Role.findById(mgr.role?._id);
+let mgrRole = await Role.findById(mgr.role?._id);
+// --role "Group Manager": give the manager her OWN role (copy of the current
+// one) so a shared role (e.g. Representative) is not changed for everybody
+const newRoleName = opt("--role");
+let roleIsNew = false;
+if (newRoleName) {
+  const rx = new RegExp(`^${esc(newRoleName.trim())}$`, "i");
+  const existing = await Role.findOne({ name: rx });
+  if (existing) mgrRole = existing;
+  else {
+    const privs = {};
+    if (mgrRole) {
+      mgrRole.privileges.forEach((v, k) => {
+        privs[k] = v.toObject ? v.toObject() : { ...v };
+      });
+    }
+    mgrRole = new Role({ name: newRoleName.trim(), privileges: privs });
+    roleIsNew = true;
+  }
+  console.log(`   • ${full(mgr)} gets role "${mgrRole.name}"${roleIsNew ? " (new)" : ""}`);
+}
 
 console.log(`\n🎯 plan:`);
 if (String(group.head || "") !== String(mgr._id)) console.log(`   • ${full(mgr)} becomes head of "${group.name}"${group.head ? " (replaces the current head)" : ""}`);
 found.forEach((e) => console.log(`   • ${full(e)} → visible to ${full(mgr)} (added to "${group.name}" members)`));
 console.log(rep ? `   • role "${mgrRole?.name}" gets all "${rep.name}" permissions + Live Feed / Team Status` : '   ⚠️  "Representative" role not found — permissions not changed');
 if (mgrRole) {
-  const n = await Employee.countDocuments({ role: mgrRole._id, isActive: true });
+  const n = roleIsNew ? 0 : await Employee.countDocuments({ role: mgrRole._id, isActive: true });
   if (n > 1) console.log(`     (role "${mgrRole.name}" has ${n} people — all of them get these permissions)`);
 }
 if ((group.drugs || []).length)
@@ -113,6 +133,10 @@ if (APPLY && !problems) {
     { _id: group._id },
     { $set: { head: mgr._id }, $addToSet: { members: { $each: found.map((e) => e._id) } } }
   );
+  if (mgrRole && newRoleName) {
+    await mgrRole.save();
+    await Employee.updateOne({ _id: mgr._id }, { $set: { role: mgrRole._id } });
+  }
   if (rep && mgrRole) {
     const BASE = { read: 0, add: 0, update: 0, delete: 0, import: 0, export: 0, dashboard: 0, live_feeds: 0, last_locations: 0, analytics: 0 };
     const plain = (v) => (v ? (v.toObject ? v.toObject() : { ...v }) : {});
