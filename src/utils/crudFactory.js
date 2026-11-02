@@ -1,5 +1,31 @@
 import { sendAsExcel } from "./excel.js";
 
+// forms send "" for an empty dropdown (e.g. no group head) — for reference
+// fields (ObjectId) that is "nothing", not an id; Mongo would fail with a
+// CastError ("Server error"). Empty -> null (update) / left out (create).
+function cleanRefs(Model, body, forCreate) {
+  if (!body || typeof body !== "object") return body;
+  const out = { ...body };
+  for (const [key, val] of Object.entries(out)) {
+    const path = Model.schema.path(key);
+    if (!path) continue;
+    const isRef = path.instance === "ObjectId";
+    const isRefArray = path.instance === "Array" && path.caster?.instance === "ObjectId";
+    if (isRef && (val === "" || val === undefined)) {
+      if (forCreate) delete out[key];
+      else out[key] = null;
+    } else if (isRefArray && Array.isArray(val)) {
+      out[key] = val.filter((v) => v !== "" && v !== null && v !== undefined);
+    }
+  }
+  return out;
+}
+
+// readable message for bad ids instead of "Server error"
+function castMessage(err) {
+  return `არასწორი მნიშვნელობა ველში "${err.path || "?"}"`;
+}
+
 export function getAll(Model, defaultPopulate = "", searchFields = ["name"]) {
   return async (req, res) => {
     try {
@@ -64,7 +90,7 @@ export function getOne(Model, defaultPopulate = "") {
 export function createOne(Model) {
   return async (req, res) => {
     try {
-      const doc = await Model.create(req.body);
+      const doc = await Model.create(cleanRefs(Model, req.body, true));
       res.status(201).json(doc);
     } catch (err) {
       if (err.code === 11000) {
@@ -75,6 +101,7 @@ export function createOne(Model) {
         const messages = Object.values(err.errors).map((e) => e.message);
         return res.status(400).json({ error: messages.join(", ") });
       }
+      if (err.name === "CastError") return res.status(400).json({ error: castMessage(err) });
       console.error(`createOne ${Model.modelName} failed:`, err);
       res.status(500).json({ error: "Server error" });
     }
@@ -84,7 +111,7 @@ export function createOne(Model) {
 export function updateOne(Model) {
   return async (req, res) => {
     try {
-      const doc = await Model.findByIdAndUpdate(req.params.id, req.body, {
+      const doc = await Model.findByIdAndUpdate(req.params.id, cleanRefs(Model, req.body, false), {
         new: true,
         runValidators: true,
       });
@@ -99,6 +126,7 @@ export function updateOne(Model) {
         const messages = Object.values(err.errors).map((e) => e.message);
         return res.status(400).json({ error: messages.join(", ") });
       }
+      if (err.name === "CastError") return res.status(400).json({ error: castMessage(err) });
       console.error(`updateOne ${Model.modelName} failed:`, err);
       res.status(500).json({ error: "Server error" });
     }
