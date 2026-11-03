@@ -13,6 +13,9 @@ const timesheetMemberSchema = new mongoose.Schema(
     hours: { type: Number, default: 8 },                    // hours on a normal working day
     workDays: { type: [Number], default: [1, 2, 3, 4, 5] }, // 0 = Sunday ... 6 = Saturday
     order: { type: Number, default: 0 },
+    // last working day "yyyy-mm-dd" of someone who left: shown on the
+    // timesheet up to that day, not in later months (old months stay as they were)
+    leftAfter: { type: String, default: "" },
   },
   { timestamps: true }
 );

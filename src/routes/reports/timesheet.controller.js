@@ -109,7 +109,10 @@ async function computeGrids(sheets, year, month) {
   const to = new Date(Date.UTC(year, month, 0, 23, 59, 59));
   const { days, workingDays, docDate } = await monthCalendar(year, month);
 
-  const allMembers = await TimesheetMember.find({ sheet: { $in: sheets.map((s) => s.key) } }).sort({ order: 1, _id: 1 })
+  const allMembers = await TimesheetMember.find({
+    sheet: { $in: sheets.map((s) => s.key) },
+    $or: [{ leftAfter: { $in: [null, ""] } }, { leftAfter: { $gte: days[0].key } }],
+  }).sort({ order: 1, _id: 1 })
     .populate("employee", "firstName lastName isActive").lean();
   const empIds = allMembers.map((m) => m.employee?._id).filter(Boolean);
   const [entries, cells] = await Promise.all([
@@ -131,7 +134,8 @@ async function computeGrids(sheets, year, month) {
     const leaves = (m.employee && leaveBy.get(String(m.employee._id))) || new Map();
     const values = [], auto = [], edited = [];
     for (const d of days) {
-      const a = d.holiday || !work.has(d.wd) ? "დ" : leaves.get(d.key) || String(m.hours || 8);
+      const gone = m.leftAfter && d.key > m.leftAfter;
+      const a = gone ? "" : d.holiday || !work.has(d.wd) ? "დ" : leaves.get(d.key) || String(m.hours || 8);
       const own = cellBy.get(`${m._id}|${d.key}`);
       auto.push(a);
       values.push(own ?? a);
