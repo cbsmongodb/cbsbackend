@@ -177,7 +177,7 @@ export async function getLiveFeed(req, res) {
     const plans = await PlanConfiguration.find(planQuery)
       .populate("performer", "firstName lastName")
       .populate("hospital", "name lat lng address")
-      .select("performer hospital status")
+      .select("performer hospital status iWentAt iLeftAt")
       .lean();
 
     const planIds = plans.map((p) => p._id);
@@ -207,6 +207,9 @@ export async function getLiveFeed(req, res) {
         hospitalLat: plan.hospital?.lat ?? null,
         hospitalLng: plan.hospital?.lng ?? null,
         status: plan.status,
+        // feedTimes: shown even when the phone gave no location
+        iWentAt: plan.iWentAt || null,
+        iLeftAt: plan.iLeftAt || null,
         addresses: addrs.map((a) => ({
           addressType: a.addressType,
           lat: a.lat,
