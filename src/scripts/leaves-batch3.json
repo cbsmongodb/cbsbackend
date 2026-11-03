@@ -1,0 +1,29 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "მირანდა ჯანჯღავა",
+   "last": "^\\s*(Janjgh?ava)\\s*$",
+   "first": "Mir",
+   "type": "paid",
+   "from": "2026-10-15",
+   "to": "2026-10-16"
+  },
+  {
+   "ka": "მირანდა ჯანჯღავა",
+   "last": "^\\s*(Janjgh?ava)\\s*$",
+   "first": "Mir",
+   "type": "paid",
+   "from": "2026-10-26",
+   "to": "2026-10-26"
+  },
+  {
+   "ka": "მირანდა ჯანჯღავა",
+   "last": "^\\s*(Janjgh?ava)\\s*$",
+   "first": "Mir",
+   "type": "unpaid",
+   "from": "2026-10-27",
+   "to": "2026-10-28"
+  }
+ ]
+}

@@ -11,6 +11,8 @@ const sectionSchema = new mongoose.Schema(
     // groups belonging to this section — a Division Manager (Section.head)
     // sees the union of all these groups' members/drugs/heads
     groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
+    // sharedDrugs: everyone in this division sees every drug of all its groups
+    sharedDrugs: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

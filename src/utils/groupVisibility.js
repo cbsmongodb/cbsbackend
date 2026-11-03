@@ -194,6 +194,21 @@ async function computeVisibleDrugIds(requester) {
   (await getDivisionGroups(requester)).forEach(add);
   const or = [{ members: requester._id }];
   if (requester.group) or.push({ _id: requester.group?._id || requester.group });
-  (await Group.find({ $or: or }).select("drugs").lean()).forEach(add);
+  const ownGroups = await Group.find({ $or: or }).select("drugs section").lean();
+  ownGroups.forEach(add);
+  // sharedDrugs: the division shares all its groups' drugs with everyone in it
+  const secIds = new Set(ownGroups.map((x) => x.section && String(x.section)).filter(Boolean));
+  const linked = await Section.find({ groups: { $in: ownGroups.map((x) => x._id) } }).select("_id").lean();
+  linked.forEach((x) => secIds.add(String(x._id)));
+  if (secIds.size) {
+    const shared = await Section.find({ _id: { $in: [...secIds] }, sharedDrugs: true }).select("groups").lean();
+    if (shared.length) {
+      const sIds = shared.map((x) => x._id);
+      const listed = shared.flatMap((x) => x.groups || []);
+      const all = await Group.find({ $or: [{ section: { $in: sIds } }, { _id: { $in: listed } }] })
+        .select("drugs").lean();
+      all.forEach(add);
+    }
+  }
   return Array.from(ids);
 }

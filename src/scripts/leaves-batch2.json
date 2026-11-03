@@ -1,0 +1,61 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "თამუნა ჭკადუა",
+   "last": "^\\s*(T(c)?hkadua|Chkadua)\\s*$",
+   "first": "Tam",
+   "type": "paid",
+   "from": "2026-09-14",
+   "to": "2026-09-14"
+  },
+  {
+   "ka": "დიანა ფრუიძე",
+   "last": "^\\s*(Fruidze|Pruidze)\\s*$",
+   "first": "Dian",
+   "type": "paid",
+   "from": "2026-09-10",
+   "to": "2026-09-10"
+  },
+  {
+   "ka": "თამარ ალიბეგაშვილი",
+   "last": "^\\s*(Alibegashvili)\\s*$",
+   "first": "Tam",
+   "type": "paid",
+   "from": "2026-09-15",
+   "to": "2026-09-15"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rus",
+   "type": "paid",
+   "from": "2026-09-21",
+   "to": "2026-09-21"
+  },
+  {
+   "ka": "თამარ ღონღაძე",
+   "last": "^\\s*(G(h)?ong(h)?adze)\\s*$",
+   "first": "Tam",
+   "type": "paid",
+   "from": "2026-09-23",
+   "to": "2026-09-23"
+  },
+  {
+   "ka": "ინგა კუჭავა",
+   "last": "^\\s*(Ku(t)?chava|Kuchava)\\s*$",
+   "first": "Ing",
+   "type": "paid",
+   "from": "2026-10-01",
+   "to": "2026-10-01"
+  },
+  {
+   "ka": "ნანა ბერიანიძე",
+   "last": "^\\s*(Berianidze)\\s*$",
+   "first": "Nan",
+   "type": "sick",
+   "from": "2026-09-08",
+   "to": "2026-09-10"
+  }
+ ]
+}

@@ -1,0 +1,285 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "ბორის (ბაჩო) ზიბზიბაძე",
+   "last": "^\\s*(Zibzibadze)\\s*$",
+   "type": "paid",
+   "from": "2026-10-01",
+   "to": "2026-10-04",
+   "weekends": true
+  },
+  {
+   "ka": "ნინო ბასილიძე",
+   "last": "^\\s*(Basilidze)\\s*$",
+   "type": "paid",
+   "from": "2026-11-06",
+   "to": "2026-11-06",
+   "first": "Nino"
+  },
+  {
+   "ka": "შორენა პაპაშვილი",
+   "last": "^\\s*(Papashvili)\\s*$",
+   "type": "paid",
+   "from": "2026-11-30",
+   "to": "2026-11-30",
+   "first": "Shorena"
+  },
+  {
+   "ka": "ნინო თორდია",
+   "last": "^\\s*(Tordia)\\s*$",
+   "type": "paid",
+   "from": "2026-10-06",
+   "to": "2026-10-06",
+   "first": "Nino"
+  },
+  {
+   "ka": "მარიამ ჯანიაშვილი",
+   "last": "^\\s*(D?janiashvili)\\s*$",
+   "type": "paid",
+   "from": "2026-10-09",
+   "to": "2026-10-09",
+   "first": "Mari"
+  },
+  {
+   "ka": "თიკო (თეა) შუბითიძე",
+   "last": "^\\s*(Shubitidze)\\s*$",
+   "type": "paid",
+   "from": "2026-10-16",
+   "to": "2026-10-16",
+   "first": "T"
+  },
+  {
+   "ka": "მეგი თენაძე",
+   "last": "^\\s*(Tenadze)\\s*$",
+   "type": "paid",
+   "from": "2026-10-13",
+   "to": "2026-10-13",
+   "first": "Meg"
+  },
+  {
+   "ka": "თამარ გოდერძიშვილი",
+   "last": "^\\s*(Goderdzishvili)\\s*$",
+   "type": "paid",
+   "from": "2026-10-12",
+   "to": "2026-10-12",
+   "first": "Tam"
+  },
+  {
+   "ka": "ჯინჯოლავა",
+   "last": "^\\s*(Jinjolava)\\s*$",
+   "type": "sick",
+   "from": "2026-10-05",
+   "to": "2026-10-12",
+   "first": "Tam"
+  },
+  {
+   "ka": "ელისო ლეკიშვილი",
+   "last": "^\\s*(Lekishvili)\\s*$",
+   "type": "unpaid",
+   "from": "2026-10-23",
+   "to": "2026-10-23",
+   "first": "Elis"
+  },
+  {
+   "ka": "მირანდა ჯანჯღავა",
+   "last": "^\\s*(Janjgh?ava)\\s*$",
+   "type": "paid",
+   "from": "2026-10-15",
+   "to": "2026-10-16",
+   "first": "Mir"
+  },
+  {
+   "ka": "ლიზა გულაშვილი",
+   "last": "^\\s*(Gulashvili)\\s*$",
+   "type": "paid",
+   "from": "2026-10-26",
+   "to": "2026-10-26",
+   "first": "Liz"
+  },
+  {
+   "ka": "ქეთევან ჯალაღონია",
+   "last": "^\\s*(Jalagh?onia)\\s*$",
+   "type": "paid",
+   "from": "2026-10-13",
+   "to": "2026-10-13",
+   "first": "Ket"
+  },
+  {
+   "ka": "თამუნა გოცირიძე",
+   "last": "^\\s*(Go[tc]+iridze)\\s*$",
+   "type": "paid",
+   "from": "2026-10-27",
+   "to": "2026-10-27",
+   "first": "Tam"
+  },
+  {
+   "ka": "მარიამ გელაშვილი",
+   "last": "^\\s*(Gelashvili)\\s*$",
+   "type": "unpaid",
+   "from": "2026-09-15",
+   "to": "2026-09-15",
+   "first": "Mari"
+  },
+  {
+   "ka": "მაია სიხაშვილი",
+   "last": "^\\s*(Sikhashvili)\\s*$",
+   "type": "sick",
+   "from": "2026-09-21",
+   "to": "2026-09-25",
+   "first": "Mai"
+  },
+  {
+   "ka": "ნათია წულაია",
+   "last": "^\\s*(Ts?ulaia|Tsulaya|Wulaia)\\s*$",
+   "type": "paid",
+   "from": "2026-08-03",
+   "to": "2026-08-03",
+   "first": "Nat"
+  },
+  {
+   "ka": "ნათია წულაია",
+   "last": "^\\s*(Ts?ulaia|Tsulaya|Wulaia)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Nat"
+  },
+  {
+   "ka": "თამუნა ღონღაძე",
+   "last": "^\\s*(G(h)?ong(h)?adze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Tam"
+  },
+  {
+   "ka": "ნანა ხეცურიანი",
+   "last": "^\\s*(Khetsuriani|Kh?ecuriani)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Nan"
+  },
+  {
+   "ka": "დიანა ფრუიძე",
+   "last": "^\\s*(Fruidze|Pruidze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-03",
+   "first": "Dian"
+  },
+  {
+   "ka": "ნატა არჩვაძე",
+   "last": "^\\s*(Archvadze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Nat"
+  },
+  {
+   "ka": "თამარ ალიბეგაშვილი",
+   "last": "^\\s*(Alibegashvili)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-02",
+   "first": "Tam"
+  },
+  {
+   "ka": "ჯინჯოლავა",
+   "last": "^\\s*(Jinjolava)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-26",
+   "first": "Tam"
+  },
+  {
+   "ka": "ნანა ბერიანიძე",
+   "last": "^\\s*(Berianidze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Nan"
+  },
+  {
+   "ka": "თამუნა ჭკადუა",
+   "last": "^\\s*(T(c)?hkadua|Chkadua)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Tam"
+  },
+  {
+   "ka": "ლუდმილა გაგნიძე",
+   "last": "^\\s*(Gagnidze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-03",
+   "first": "Lud"
+  },
+  {
+   "ka": "ლანა კახიძე",
+   "last": "^\\s*(Kakhidze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Lan"
+  },
+  {
+   "ka": "ნაზი ფარეშიშვილი",
+   "last": "^\\s*([PF]areshishvili)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-06",
+   "first": "Naz"
+  },
+  {
+   "ka": "მეგი თენაძე",
+   "last": "^\\s*(Tenadze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Meg"
+  },
+  {
+   "ka": "ინგა კუჭავა",
+   "last": "^\\s*(Ku(t)?chava|Kuchava)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Ing"
+  },
+  {
+   "ka": "მარიამ ხინველი",
+   "last": "^\\s*(Khinveli)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Mari"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31",
+   "first": "Rus"
+  },
+  {
+   "ka": "თეა შუბითიძე",
+   "last": "^\\s*(Shubitidze)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-01",
+   "first": "T"
+  },
+  {
+   "ka": "ანა შავერდაშვილი",
+   "last": "^\\s*(Shaverdashvili)\\s*$",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-09-03",
+   "first": "An"
+  }
+ ]
+}
