@@ -13,6 +13,11 @@ import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 const OWN_PLANNINGS_ROLES = new Set(["product manager"]);
 const ownPlanningsOnly = (emp) => OWN_PLANNINGS_ROLES.has((emp?.role?.name || "").toLowerCase().trim());
 const isOwnPlan = (plan, emp) => String(plan.performer) === String(emp._id);
+// repStatusLock: a representative marks "on site / done" only with the
+// check-in / check-out buttons (they save the time + location)
+const DONE_STATUSES = ["i_went", "i_left", "completed"];
+const isRep = (emp) => (emp?.role?.name || "").toLowerCase().trim() === "representative";
+const STATUS_LOCK_MSG = "„ადგილზეა“ / „შესრულებულია“ მხოლოდ „მივედი“ / „წავედი“ ღილაკით აღინიშნება (ლოკაციით)";
 
 const POPULATE = "employee hospital pharmacy author performer";
 
@@ -146,7 +151,7 @@ export async function createPlanning(req, res) {
       ...req.body,
       author: req.body.author || req.employee._id,
       performer: ownPlanningsOnly(req.employee) ? req.employee._id : req.body.performer || req.employee._id,
-      status: req.body.status || "planned",
+      status: isRep(req.employee) && DONE_STATUSES.includes(req.body.status) ? "planned" : req.body.status || "planned",
     };
     delete data.planNumber;
     // two people saving at the same second can get the same "PL<n>" ->
@@ -216,6 +221,9 @@ export async function updatePlanning(req, res) {
       return res.status(400).json({ error: "Only plans scheduled for today can be edited" });
     }
 
+    if (isRep(req.employee) && DONE_STATUSES.includes(req.body.status) && req.body.status !== plan.status) {
+      return res.status(400).json({ error: STATUS_LOCK_MSG });
+    }
     if (req.body.status && req.body.status !== plan.status) {
       await undoVisitMarks(plan, req.body.status);
     }
