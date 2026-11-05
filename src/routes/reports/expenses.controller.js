@@ -1,26 +1,43 @@
-// GET /api/reports/reimbursement/expenses?month=YYYY-MM
-// Travel expenses of ONE month, in the company's Expenses_YYYY.xlsx look:
-// №, name, REG, the month's amount, TOTAL (regional reps yellow).
-// A finished month is filled from the CRM once and saved (old months come from
-// the imported Excel); the current month is shown live and not saved.
+// GET /api/reports/reimbursement/expenses?from=YYYY-MM-DD&to=YYYY-MM-DD[&employee=][&division=]
+// Travel expenses for the dates chosen on the Reimbursement page, in the company's
+// Expenses_YYYY.xlsx look: №, name, REG, amount, TOTAL (regional reps yellow).
+// Same filters and the same calculation as the report on screen
+// (one hospital visit day = the region's amount). Nothing is saved.
 import ExcelJS from "exceljs";
+import PlanConfiguration from "../../models/PlanConfiguration.js";
 import ExpenseRow from "../../models/ExpenseRow.js";
 import Employee from "../../models/Employee.js";
-import { MONTHS_EN, closeFinishedMonths, computeMonthAmounts, georgiaToday } from "../../utils/expenses.js";
+import "../../models/Hospital.js";
+import "../../models/Region.js";
+import { MONTHS_EN } from "../../utils/expenses.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { divisionEmployeeIds } from "./reports.controller.js";
 
 const YELLOW = "FFFFFF00";   // regional reps
 const GREY = "FFBFBFBF";     // TOTAL row
-const GREEN = "FFD7E4BD";    // the month column
+const GREEN = "FFD7E4BD";    // the amount column
 const NUM = "0.00;[Red]0.00";
 const thin = { style: "thin", color: { argb: "FF000000" } };
 const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
 const font = (size, bold = false) => ({ name: "Calibri", size, bold });
 const fill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+const dayStart = (s) => new Date(`${s}T00:00:00+04:00`);
+const dayEnd = (s) => new Date(`${s}T23:59:59.999+04:00`);
+const ddmm = (s) => `${s.slice(8, 10)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
 
-function buildMonthSheet(wb, year, month, rows) {
-  const ws = wb.addWorksheet(`${MONTHS_EN[month - 1]} ${year}`, { properties: { defaultRowHeight: 15.75 } });
-  [["A", 3.86], ["B", 5.71], ["C", 26], ["D", 12], ["E", 15]].forEach(([c, w]) => { ws.getColumn(c).width = w; });
+// "2026-10-01".."2026-10-31" -> "OCTOBER"; anything else -> "30.10.2026 – 05.11.2026"
+function periodLabel(from, to) {
+  const lastDay = new Date(Date.UTC(+from.slice(0, 4), +from.slice(5, 7), 0)).getUTCDate();
+  if (from.slice(0, 7) === to.slice(0, 7) && from.slice(8) === "01" && +to.slice(8) === lastDay) {
+    return MONTHS_EN[+from.slice(5, 7) - 1];
+  }
+  return from === to ? ddmm(from) : `${ddmm(from)} – ${ddmm(to)}`;
+}
+
+function buildSheet(wb, year, label, rows) {
+  const ws = wb.addWorksheet(label.replace(/[\\/?*[\]:]/g, " ").slice(0, 31), { properties: { defaultRowHeight: 15.75 } });
+  [["A", 3.86], ["B", 5.71], ["C", 26], ["D", 12], ["E", Math.max(15, label.length + 4)]].forEach(([c, w]) => { ws.getColumn(c).width = w; });
 
   const y = ws.getCell("C3");
   y.value = year;
@@ -30,36 +47,27 @@ function buildMonthSheet(wb, year, month, rows) {
 
   const h = ws.getRow(4);
   h.height = 18.75;
-  const reg = h.getCell(4);
-  reg.value = "REG";
-  reg.font = font(12, true);
-  reg.alignment = { horizontal: "center" };
-  reg.border = BORDER;
-  const mh = h.getCell(5);
-  mh.value = MONTHS_EN[month - 1];
-  mh.font = font(14, true);
-  mh.alignment = { horizontal: "center" };
-  mh.border = BORDER;
+  [[4, "REG", 12], [5, label, 14]].forEach(([col, v, size]) => {
+    const c = h.getCell(col);
+    c.value = v;
+    c.font = font(size, true);
+    c.alignment = { horizontal: "center" };
+    c.border = BORDER;
+  });
 
   rows.forEach((r, i) => {
     const row = ws.getRow(5 + i);
     row.height = 15.75;
-    const yellow = r.region ? fill(YELLOW) : null;
-    const cells = [
-      [2, i + 1, font(12), "center"],
-      [3, r.name, font(12), "left"],
-      [4, r.region || null, font(12), "left"],
-      [5, r.amount, font(11), "center"],
-    ];
-    cells.forEach(([col, value, f, align]) => {
-      const c = row.getCell(col);
-      c.value = value;
-      c.font = f;
-      c.alignment = { horizontal: align };
-      c.border = BORDER;
-      if (col === 5) { c.numFmt = NUM; c.fill = fill(GREEN); }
-      else if (col > 2 && yellow) c.fill = yellow;
-    });
+    [[2, i + 1, 12, "center"], [3, r.name, 12, "left"], [4, r.region || null, 12, "left"], [5, r.amount, 11, "center"]]
+      .forEach(([col, value, size, align]) => {
+        const c = row.getCell(col);
+        c.value = value;
+        c.font = font(size);
+        c.alignment = { horizontal: align };
+        c.border = BORDER;
+        if (col === 5) { c.numFmt = NUM; c.fill = fill(GREEN); }
+        else if (col > 2 && r.region) c.fill = fill(YELLOW);
+      });
   });
 
   const tr = 5 + rows.length;
@@ -82,49 +90,68 @@ function buildMonthSheet(wb, year, month, rows) {
 
 export async function exportExpensesWorkbook(req, res) {
   try {
-    await closeFinishedMonths(); // saves every finished month once (keeps the yearly history complete)
+    const { from, to, employee, division } = req.query;
+    if (!isDay(from) || !isDay(to) || from > to) return res.status(400).json({ error: "from / to dates are required" });
 
-    const today = georgiaToday();
-    let year, month;
-    const q = String(req.query.month || "").match(/^(\d{4})-(\d{2})$/);
-    if (q) { year = +q[1]; month = +q[2]; }
-    else if (today.month === 1) { year = today.year - 1; month = 12; } // default: last finished month
-    else { year = today.year; month = today.month - 1; }
-    if (month < 1 || month > 12) return res.status(400).json({ error: "month=YYYY-MM" });
+    // the same filter as the Reimbursement report on screen
+    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null }, period: { $gte: dayStart(from), $lte: dayEnd(to) } };
+    let ids = null; // null = everyone
+    const scope = await getScopeEmployeeIds(req.employee);
+    if (scope) ids = scope.map(String);
+    if (employee) ids = ids ? ids.filter((x) => x === String(employee)) : [String(employee)];
+    if (division) {
+      const d = new Set(await divisionEmployeeIds(division));
+      ids = ids ? ids.filter((x) => d.has(x)) : [...d];
+    }
+    if (ids) filter.performer = { $in: ids };
 
-    const isFuture = year > today.year || (year === today.year && month > today.month);
-    if (isFuture) return res.status(400).json({ error: "This month has not started yet" });
-    const isCurrent = year === today.year && month === today.month;
-
-    const stored = await ExpenseRow.find({ year }).sort({ order: 1 }).lean();
-    let rows;
-    if (!isCurrent) {
-      rows = stored.map((r) => ({ ...r, amount: r.amounts?.[month - 1] ?? null }));
-    } else {
-      // running month: live numbers from the CRM, nothing saved
-      const live = await computeMonthAmounts(year, month);
-      const byEmp = new Map(stored.filter((r) => r.employee).map((r) => [String(r.employee), r]));
-      rows = stored.map((r) => ({ ...r, amount: r.employee ? live.get(String(r.employee)) ?? null : null }));
-      const extra = [...live.keys()].filter((id) => !byEmp.has(id));
-      if (extra.length) {
-        const emps = await Employee.find({ _id: { $in: extra } }).select("firstName lastName").lean();
-        emps.forEach((e) => rows.push({
-          name: `${e.firstName || ""} ${e.lastName || ""}`.trim().toUpperCase(), region: "", employee: e._id, amount: live.get(String(e._id)),
-        }));
-      }
+    const plans = await PlanConfiguration.find(filter)
+      .populate({ path: "hospital", select: "region", populate: { path: "region", select: "reimbursementAmt" } })
+      .select("period performer hospital")
+      .sort({ iWentAt: 1 })
+      .lean();
+    const seen = new Set();
+    const sums = new Map();
+    for (const p of plans) {
+      if (!p.hospital?.region || !p.performer) continue;
+      const emp = String(p.performer);
+      const key = `${new Date(p.period).toISOString().slice(0, 10)}_${emp}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sums.set(emp, (sums.get(emp) || 0) + (p.hospital.region.reimbursementAmt || 0));
     }
 
-    const scope = await getScopeEmployeeIds(req.employee);
-    const scopeSet = scope ? new Set(scope.map(String)) : null;
-    rows = rows.filter((r) => r.amount != null && (!scopeSet || (r.employee && scopeSet.has(String(r.employee)))));
+    // names, REG and order as in the Expenses workbook of that year
+    const year = +to.slice(0, 4);
+    let list = await ExpenseRow.find({ year }).sort({ order: 1 }).lean();
+    if (!list.length) {
+      const last = await ExpenseRow.findOne({}).sort({ year: -1 }).select("year").lean();
+      if (last) list = await ExpenseRow.find({ year: last.year }).sort({ order: 1 }).lean();
+    }
+    const rows = [];
+    const done = new Set();
+    for (const r of list) {
+      const id = r.employee ? String(r.employee) : null;
+      if (!id || !sums.has(id) || done.has(id)) continue;
+      done.add(id);
+      rows.push({ name: r.name, region: r.region, amount: Math.round(sums.get(id) * 100) / 100 });
+    }
+    const rest = [...sums.keys()].filter((id) => !done.has(id));
+    if (rest.length) {
+      const emps = await Employee.find({ _id: { $in: rest } }).select("firstName lastName").lean();
+      emps
+        .map((e) => ({ name: `${e.firstName || ""} ${e.lastName || ""}`.trim().toUpperCase(), region: "", amount: Math.round(sums.get(String(e._id)) * 100) / 100 }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach((r) => rows.push(r));
+    }
 
     const wb = new ExcelJS.Workbook();
     wb.creator = "Global CBS";
     wb.created = new Date();
-    buildMonthSheet(wb, year, month, rows);
+    buildSheet(wb, year, periodLabel(from, to), rows);
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="Expenses_${year}-${String(month).padStart(2, "0")}.xlsx"`);
+    res.setHeader("Content-Disposition", `attachment; filename="Expenses_${from}_${to}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) {

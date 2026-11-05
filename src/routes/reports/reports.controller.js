@@ -95,7 +95,7 @@ export async function getEfficiencyReport(req, res) {
 }
 
 // employees of one division (its groups' members + the division head)
-async function divisionEmployeeIds(sectionId) {
+export async function divisionEmployeeIds(sectionId) {
   const sec = await Section.findById(sectionId).select("head").lean();
   const gids = await Group.find({ section: sectionId }).distinct("_id");
   const ids = (await Employee.find({ group: { $in: gids } }).distinct("_id")).map(String);
