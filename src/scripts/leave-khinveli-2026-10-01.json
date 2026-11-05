@@ -1,0 +1,14 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "მარიამ ხინველი",
+   "last": "^\\s*(Khinveli)\\s*$",
+   "first": "Mari",
+   "type": "paid",
+   "from": "2026-10-01",
+   "to": "2026-10-01",
+   "note": "აგვისტოს შვებულების გაგრძელება"
+  }
+ ]
+}

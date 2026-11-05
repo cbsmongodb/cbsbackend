@@ -1,0 +1,13 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "სალომე ლომიძე",
+   "last": "^\\s*(Lomidze)\\s*$",
+   "first": "Salom",
+   "type": "sick",
+   "from": "2026-10-08",
+   "to": "2026-10-16"
+  }
+ ]
+}
