@@ -1,28 +1,26 @@
-// GET /api/reports/reimbursement/expenses
-// The yearly travel-expenses workbook, exactly in the company's Expenses_YYYY.xlsx
-// layout: one sheet per year, people down, months across, TOTAL row.
-// Every finished month is filled automatically (once) before the file is built.
+// GET /api/reports/reimbursement/expenses?month=YYYY-MM
+// Travel expenses of ONE month, in the company's Expenses_YYYY.xlsx look:
+// №, name, REG, the month's amount, TOTAL (regional reps yellow).
+// A finished month is filled from the CRM once and saved (old months come from
+// the imported Excel); the current month is shown live and not saved.
 import ExcelJS from "exceljs";
 import ExpenseRow from "../../models/ExpenseRow.js";
-import ExpenseMonth from "../../models/ExpenseMonth.js";
-import { MONTHS_EN, closeFinishedMonths, georgiaToday } from "../../utils/expenses.js";
+import Employee from "../../models/Employee.js";
+import { MONTHS_EN, closeFinishedMonths, computeMonthAmounts, georgiaToday } from "../../utils/expenses.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 const YELLOW = "FFFFFF00";   // regional reps
-const GREY = "FFBFBFBF";     // left the company / TOTAL row
-const GREEN = "FFD7E4BD";    // the newest month
+const GREY = "FFBFBFBF";     // TOTAL row
+const GREEN = "FFD7E4BD";    // the month column
 const NUM = "0.00;[Red]0.00";
 const thin = { style: "thin", color: { argb: "FF000000" } };
 const BORDER = { top: thin, left: thin, bottom: thin, right: thin };
 const font = (size, bold = false) => ({ name: "Calibri", size, bold });
 const fill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
 
-// columns: A spacer, B №, C name, D REG, E..P months
-const WIDTHS = { A: 3.86, B: 5.71, C: 24.86, D: 11.29, E: 12.14, F: 13.57, G: 10.14, H: 8.43, I: 8.86, J: 9.57, K: 9.14, L: 10.86, M: 14.86, N: 12.14, O: 14.86, P: 14 };
-
-function addYearSheet(wb, year, rows, newestMonth) {
-  const ws = wb.addWorksheet(String(year), { properties: { defaultRowHeight: 15.75 } });
-  Object.entries(WIDTHS).forEach(([c, w]) => { ws.getColumn(c).width = w; });
+function buildMonthSheet(wb, year, month, rows) {
+  const ws = wb.addWorksheet(`${MONTHS_EN[month - 1]} ${year}`, { properties: { defaultRowHeight: 15.75 } });
+  [["A", 3.86], ["B", 5.71], ["C", 26], ["D", 12], ["E", 15]].forEach(([c, w]) => { ws.getColumn(c).width = w; });
 
   const y = ws.getCell("C3");
   y.value = year;
@@ -37,112 +35,96 @@ function addYearSheet(wb, year, rows, newestMonth) {
   reg.font = font(12, true);
   reg.alignment = { horizontal: "center" };
   reg.border = BORDER;
-  MONTHS_EN.forEach((m, i) => {
-    const c = h.getCell(5 + i);
-    c.value = m;
-    c.font = font(14, true);
-    c.numFmt = NUM;
-    c.alignment = { horizontal: "center" };
-    c.border = BORDER;
-  });
+  const mh = h.getCell(5);
+  mh.value = MONTHS_EN[month - 1];
+  mh.font = font(14, true);
+  mh.alignment = { horizontal: "center" };
+  mh.border = BORDER;
 
   rows.forEach((r, i) => {
     const row = ws.getRow(5 + i);
     row.height = 15.75;
-    const rowFill = r.left ? GREY : r.region ? YELLOW : null;
-
-    const n = row.getCell(2);
-    n.value = i + 1;
-    n.font = font(12);
-    n.alignment = { horizontal: "center" };
-    n.border = BORDER;
-
-    const name = row.getCell(3);
-    name.value = r.name;
-    name.font = font(12);
-    name.alignment = { horizontal: "left" };
-    name.border = BORDER;
-
-    const rg = row.getCell(4);
-    rg.value = r.region || null;
-    rg.font = font(12);
-    rg.alignment = { horizontal: "left" };
-    rg.border = BORDER;
-
-    for (let m = 0; m < 12; m++) {
-      const c = row.getCell(5 + m);
-      const v = r.amounts?.[m];
-      c.value = v == null ? null : v;
-      c.font = font(11);
-      c.numFmt = NUM;
-      c.alignment = { horizontal: "center" };
+    const yellow = r.region ? fill(YELLOW) : null;
+    const cells = [
+      [2, i + 1, font(12), "center"],
+      [3, r.name, font(12), "left"],
+      [4, r.region || null, font(12), "left"],
+      [5, r.amount, font(11), "center"],
+    ];
+    cells.forEach(([col, value, f, align]) => {
+      const c = row.getCell(col);
+      c.value = value;
+      c.font = f;
+      c.alignment = { horizontal: align };
       c.border = BORDER;
-      if (!r.left && newestMonth === m + 1) c.fill = fill(GREEN);
-      else if (rowFill) c.fill = fill(rowFill);
-    }
-    if (rowFill) { name.fill = fill(rowFill); rg.fill = fill(rowFill); }
+      if (col === 5) { c.numFmt = NUM; c.fill = fill(GREEN); }
+      else if (col > 2 && yellow) c.fill = yellow;
+    });
   });
 
-  // TOTAL
   const tr = 5 + rows.length;
   const t = ws.getRow(tr);
   t.height = 15.75;
-  const tn = t.getCell(2);
-  tn.value = rows.length + 1;
-  tn.font = font(12);
-  tn.alignment = { horizontal: "center" };
-  tn.border = BORDER;
   const tl = t.getCell(3);
   tl.value = "TOTAL";
   tl.font = font(12, true);
   tl.fill = fill(GREY);
   tl.border = BORDER;
-  for (let m = 0; m < 12; m++) {
-    const c = t.getCell(5 + m);
-    const L = ws.getColumn(5 + m).letter;
-    const sum = rows.reduce((s, r) => s + (Number(r.amounts?.[m]) || 0), 0);
-    c.value = rows.length ? { formula: `SUM(${L}5:${L}${tr - 1})`, result: Math.round(sum * 100) / 100 } : 0;
-    c.font = font(12, true);
-    c.numFmt = NUM;
-    c.alignment = { horizontal: "center" };
-    c.fill = fill(GREY);
-    c.border = BORDER;
-  }
-  return ws;
+  const sum = Math.round(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100) / 100;
+  const tc = t.getCell(5);
+  tc.value = rows.length ? { formula: `SUM(E5:E${tr - 1})`, result: sum } : 0;
+  tc.font = font(12, true);
+  tc.numFmt = NUM;
+  tc.alignment = { horizontal: "center" };
+  tc.fill = fill(GREY);
+  tc.border = BORDER;
 }
 
 export async function exportExpensesWorkbook(req, res) {
   try {
-    await closeFinishedMonths();
+    await closeFinishedMonths(); // saves every finished month once (keeps the yearly history complete)
+
+    const today = georgiaToday();
+    let year, month;
+    const q = String(req.query.month || "").match(/^(\d{4})-(\d{2})$/);
+    if (q) { year = +q[1]; month = +q[2]; }
+    else if (today.month === 1) { year = today.year - 1; month = 12; } // default: last finished month
+    else { year = today.year; month = today.month - 1; }
+    if (month < 1 || month > 12) return res.status(400).json({ error: "month=YYYY-MM" });
+
+    const isFuture = year > today.year || (year === today.year && month > today.month);
+    if (isFuture) return res.status(400).json({ error: "This month has not started yet" });
+    const isCurrent = year === today.year && month === today.month;
+
+    const stored = await ExpenseRow.find({ year }).sort({ order: 1 }).lean();
+    let rows;
+    if (!isCurrent) {
+      rows = stored.map((r) => ({ ...r, amount: r.amounts?.[month - 1] ?? null }));
+    } else {
+      // running month: live numbers from the CRM, nothing saved
+      const live = await computeMonthAmounts(year, month);
+      const byEmp = new Map(stored.filter((r) => r.employee).map((r) => [String(r.employee), r]));
+      rows = stored.map((r) => ({ ...r, amount: r.employee ? live.get(String(r.employee)) ?? null : null }));
+      const extra = [...live.keys()].filter((id) => !byEmp.has(id));
+      if (extra.length) {
+        const emps = await Employee.find({ _id: { $in: extra } }).select("firstName lastName").lean();
+        emps.forEach((e) => rows.push({
+          name: `${e.firstName || ""} ${e.lastName || ""}`.trim().toUpperCase(), region: "", employee: e._id, amount: live.get(String(e._id)),
+        }));
+      }
+    }
 
     const scope = await getScopeEmployeeIds(req.employee);
     const scopeSet = scope ? new Set(scope.map(String)) : null;
-
-    const [rows, months] = await Promise.all([
-      ExpenseRow.find({}).sort({ year: 1, order: 1 }).lean(),
-      ExpenseMonth.find({}).lean(),
-    ]);
-    const byYear = new Map();
-    rows.forEach((r) => {
-      if (scopeSet && !(r.employee && scopeSet.has(String(r.employee)))) return;
-      if (!byYear.has(r.year)) byYear.set(r.year, []);
-      byYear.get(r.year).push(r);
-    });
-    const { year: cy } = georgiaToday();
-    if (!byYear.size) return res.status(404).json({ error: "No expenses data yet — run src/scripts/importExpenses.js first" });
-
-    // newest finished month -> green column (in that year's sheet)
-    const newest = months.reduce((a, m) => (!a || m.year * 12 + m.month > a.year * 12 + a.month ? m : a), null);
+    rows = rows.filter((r) => r.amount != null && (!scopeSet || (r.employee && scopeSet.has(String(r.employee)))));
 
     const wb = new ExcelJS.Workbook();
     wb.creator = "Global CBS";
     wb.created = new Date();
-    const years = [...byYear.keys()].sort((a, b) => a - b);
-    years.forEach((y) => addYearSheet(wb, y, byYear.get(y), newest && newest.year === y ? newest.month : null));
-    wb.views = [{ activeTab: Math.max(0, years.indexOf(cy) >= 0 ? years.indexOf(cy) : years.length - 1) }];
+    buildMonthSheet(wb, year, month, rows);
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="Expenses_${years[years.length - 1]}.xlsx"`);
+    res.setHeader("Content-Disposition", `attachment; filename="Expenses_${year}-${String(month).padStart(2, "0")}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) {
