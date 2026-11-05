@@ -1,0 +1,29 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "ნანა ბერიანიძე",
+   "last": "^\\s*(Berianidze)\\s*$",
+   "first": "Nan",
+   "type": "sick",
+   "from": "2026-05-19",
+   "to": "2026-05-22"
+  },
+  {
+   "ka": "ნანა ბერიანიძე",
+   "last": "^\\s*(Berianidze)\\s*$",
+   "first": "Nan",
+   "type": "paid",
+   "from": "2026-06-18",
+   "to": "2026-06-19"
+  },
+  {
+   "ka": "ნანა ბერიანიძე",
+   "last": "^\\s*(Berianidze)\\s*$",
+   "first": "Nan",
+   "type": "paid",
+   "from": "2026-07-31",
+   "to": "2026-07-31"
+  }
+ ]
+}
