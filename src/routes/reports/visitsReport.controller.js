@@ -108,7 +108,28 @@ export async function getVisitsReport(req, res) {
       };
     });
 
-    res.json({ from, to, visits });
+    // one row = one employee on one day (Georgian date); newest day first, then by name
+    const gDay = (d) => new Date(+new Date(d) + 4 * 3600e3).toISOString().slice(0, 10);
+    const byRow = new Map();
+    for (const x of visits) {
+      const day = gDay(x.iWentAt || x.date);
+      const k = `${day}_${x.employeeId}`;
+      if (!byRow.has(k)) byRow.set(k, { day, employeeId: x.employeeId, employeeName: x.employeeName, divisionName: x.divisionName, visits: [] });
+      byRow.get(k).visits.push(x);
+    }
+    const rows = [...byRow.values()]
+      .map((r) => ({ ...r, visits: r.visits.sort((a, b) => new Date(a.iWentAt || a.date) - new Date(b.iWentAt || b.date)) }))
+      .sort((a, b) => b.day.localeCompare(a.day) || a.employeeName.localeCompare(b.employeeName));
+
+    const all = req.query.all === "1"; // Excel: everything at once
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+    const pages = Math.max(1, Math.ceil(rows.length / limit));
+    const page = Math.min(Math.max(parseInt(req.query.page, 10) || 1, 1), pages);
+    res.json({
+      from, to, total: rows.length, totalVisits: visits.length,
+      page: all ? 1 : page, pages: all ? 1 : pages, limit: all ? rows.length : limit,
+      rows: all ? rows : rows.slice((page - 1) * limit, page * limit),
+    });
   } catch (err) {
     console.error("getVisitsReport failed:", err);
     res.status(500).json({ error: "Server error" });
