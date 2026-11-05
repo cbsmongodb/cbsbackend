@@ -1,0 +1,13 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "თამარ ღონღაძე",
+   "last": "^\\s*(G(h)?ong(h)?adze)\\s*$",
+   "first": "Tam",
+   "type": "paid",
+   "from": "2026-06-24",
+   "to": "2026-06-26"
+  }
+ ]
+}
