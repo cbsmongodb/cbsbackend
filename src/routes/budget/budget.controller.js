@@ -244,6 +244,45 @@ export async function computeBudgetAmounts(req, res) {
     const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
     const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 
+    // current system: prescription entry lines (their bonus comes from the Bonuses page).
+    // The employee's own lines; for a group manager (who enters no prescriptions) the
+    // lines the reps entered for this doctor in this month.
+    {
+      const { parseMonth, monthWindow } = await import("../../utils/bonuses.js");
+      const win = monthWindow(parseMonth(date));
+      let lines = await DoctorEntryItem.find({ employee, doctor, period: win })
+        .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
+      if (!lines.length) {
+        lines = await DoctorEntryItem.find({ doctor, period: win })
+          .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
+      }
+      if (lines.length) {
+        let rx = 0, sales = 0, pay = 0, target = 0;
+        for (const it of lines) {
+          const price = it.drug?.price || 0;
+          const sold = (it.coefficient || 0) > 0 ? (it.prescription || 0) * it.coefficient : it.sale || 0;
+          rx += (it.prescription || 0) * price;
+          sales += sold * price;
+          pay += it.totalBudget || sold * (it.budget || 0);
+          target += (it.quota || 0) * price;
+        }
+        const now = new Date();
+        const lastBudget = await Budget.findOne({
+          doctor,
+          employee,
+          date: { $gte: new Date(now.getFullYear(), 0, 1), $lte: new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999) },
+        }).sort({ createdAt: -1 }).lean();
+        const r2 = (n) => Math.round((n || 0) * 100) / 100;
+        return res.json({
+          prescriptionAmt: r2(rx),
+          salesAmount: r2(sales),
+          payableAmt: r2(pay),
+          targetAmount: r2(target),
+          advanceAmount: r2(lastBudget?.advanceAmount),
+        });
+      }
+    }
+
     const { default: Prescription } = await import("../../models/Prescription.js");
     const { default: DrugPrescription } = await import("../../models/DrugPrescription.js");
     const { default: DoctorTarget } = await import("../../models/DoctorTarget.js");

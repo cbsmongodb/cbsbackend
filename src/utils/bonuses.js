@@ -101,7 +101,12 @@ export async function restampBonuses(month, { drug, drugs, doctor, dryRun = fals
     await DoctorEntryItem.bulkWrite(
       changes.map(({ it, v }) => ({ updateOne: { filter: { _id: it._id }, update: { $set: { budget: v } } } }))
     );
-    for (const { employee, period } of employees.values()) await recalculateForPeriod(employee, new Date(period));
+    for (const { employee, period } of employees.values()) {
+      await recalculateForPeriod(employee, new Date(period));
+      // the next months carry this month's balance forward -> recalculate them too, in order
+      const later = await DoctorEntryItem.distinct("period", { employee, period: { $gt: new Date(period) } });
+      for (const p of later.sort((a, b) => a - b)) await recalculateForPeriod(employee, new Date(p));
+    }
   }
   return { lines: items.length, changed: changes.length, employees: employees.size, changes };
 }
