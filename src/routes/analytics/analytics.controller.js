@@ -12,6 +12,7 @@ import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import Prescription from "../../models/Prescription.js";
 import DrugPrescription from "../../models/DrugPrescription.js";
 import Budget from "../../models/Budget.js";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 
 async function resolveEmployeeIdsForScope(sectionId, groupId) {
   // Group.members[] is basically never populated in real data — the
@@ -359,11 +360,13 @@ export async function getAnalytics(req, res) {
     const scopedEmployeeIds = await resolveEmployeeIdsForScope(section, group);
     if (scopedEmployeeIds) who.employee = who.employee || { $in: scopedEmployeeIds };
     if (search && search.trim()) {
-      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(escaped, "i");
+      // full names work too ("თამუნა ღონღაძე", "ღონღაძე თამუნა"):
+      // every word has to be found in the first OR the last name
+      // and Georgian letters find Latin-spelled names ("თამუნა" -> "Tamuna")
+      const nameFilter = nameSearchFilter(search, ["firstName", "lastName"]);
       const [matchingDoctors, matchingEmployees] = await Promise.all([
-        Doctor.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
-        Employee.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
+        Doctor.find(nameFilter).distinct("_id"),
+        Employee.find(nameFilter).distinct("_id"),
       ]);
       who.$or = [{ doctor: { $in: matchingDoctors } }, { employee: { $in: matchingEmployees } }];
     }
