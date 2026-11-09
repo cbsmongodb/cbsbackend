@@ -494,7 +494,7 @@ export async function getAnalytics(req, res) {
         return { ...base, ...statsFromEntryItems(r.items, drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta) };
       }
       if (r.source === "budget") {
-        return { ...base, ...statsFromEntryItems([], drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta) };
+        return { ...base, ...statsFromEntryItems([], drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta), noPrescription: true };
       }
       const t = legacyTargetByRow.get(String(r._id)) || { amount: 0, boxes: 0 };
       const s = legacyStats.get(`${r.doctor}_${r.employee}`) || { ...statsFromItems([]), paidAmount: 0, deltaAmount: 0 };
