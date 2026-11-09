@@ -2,6 +2,8 @@ import express from "express";
 import Hospital from "../../models/Hospital.js";
 import Region from "../../models/Region.js";
 import Doctor from "../../models/Doctor.js";
+import PlanConfiguration from "../../models/PlanConfiguration.js";
+import Address from "../../models/Address.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { geocodeAddress, searchAddress } from "../../utils/geocode.js";
@@ -29,12 +31,76 @@ export default function hospitalsRoutes(io) {
     )
   );
 
+  // hospitals with no lat/lng yet — most-visited first, so the developer
+  // pins the ones reps actually go to. For each one we also suggest a point:
+  // the median of the reps' own GPS at check-in / check-out there.
   router.get("/missing-coordinates", async (req, res) => {
     try {
       const hospitals = await Hospital.find({
-        $or: [{ lat: null }, { lat: { $exists: false } }],
-      }).select("name address").lean();
-      res.json(hospitals);
+        $or: [
+          { lat: null }, { lat: { $exists: false } },
+          { lng: null }, { lng: { $exists: false } },
+        ],
+      }).select("name address region").populate("region", "name").lean();
+
+      const DONE = ["i_went", "i_left", "completed"];
+      const plans = await PlanConfiguration.find({ hospital: { $in: hospitals.map((h) => h._id) } })
+        .select("hospital period status").lean();
+
+      const stats = new Map();
+      const planToHospital = new Map();
+      for (const p of plans) {
+        const key = String(p.hospital);
+        const s = stats.get(key) || { planned: 0, visits: 0, lastVisit: null, points: [] };
+        s.planned++;
+        if (DONE.includes(p.status)) {
+          s.visits++;
+          if (!s.lastVisit || p.period > s.lastVisit) s.lastVisit = p.period;
+          planToHospital.set(String(p._id), key);
+        }
+        stats.set(key, s);
+      }
+
+      const addrs = await Address.find({
+        addressableType: "PlanConfiguration",
+        addressableId: { $in: [...planToHospital.keys()] },
+        addressType: { $in: ["performer_i_went_location", "performer_i_left_location"] },
+        lat: { $ne: null },
+        lng: { $ne: null },
+      }).select("addressableId lat lng").lean();
+      for (const a of addrs) {
+        const s = stats.get(planToHospital.get(String(a.addressableId)));
+        if (s) s.points.push(a);
+      }
+
+      const median = (arr) => {
+        const v = [...arr].sort((x, y) => x - y);
+        const m = Math.floor(v.length / 2);
+        return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+      };
+
+      const result = hospitals.map((h) => {
+        const s = stats.get(String(h._id)) || { planned: 0, visits: 0, lastVisit: null, points: [] };
+        return {
+          _id: h._id,
+          name: h.name,
+          address: h.address,
+          region: h.region?.name || null,
+          planned: s.planned,
+          visits: s.visits,
+          lastVisit: s.lastVisit,
+          suggested: s.points.length
+            ? {
+                lat: median(s.points.map((p) => p.lat)),
+                lng: median(s.points.map((p) => p.lng)),
+                points: s.points.length,
+              }
+            : null,
+        };
+      });
+
+      result.sort((a, b) => b.visits - a.visits || b.planned - a.planned || a.name.localeCompare(b.name));
+      res.json(result);
     } catch (err) {
       console.error("missing-coordinates failed:", err);
       res.status(500).json({ error: "Server error" });
