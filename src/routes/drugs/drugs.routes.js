@@ -113,7 +113,6 @@ router.get(
       { header: "Name", key: "name", width: 28 },
       { header: "Price", key: "price", width: 12 },
       { header: "Stock", key: "stocks", width: 12 },
-      { header: "Bonus", key: "bonus", width: 12 },
       { header: "Monthly Target", key: "monthlyTarget", width: 16 },
       { header: "Active", key: "isActive", width: 10 },
       { header: "Expired", key: "expired", width: 10 },
