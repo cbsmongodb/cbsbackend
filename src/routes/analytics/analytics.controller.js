@@ -416,20 +416,94 @@ export async function getAnalytics(req, res) {
       legacyRows.push({ key: `legacy-${d._id}`, source: "legacy", _id: d._id, employee: String(d.employee), doctor: String(d.doctor), date: d.date });
     }
 
-    // ---- budgets with no prescription line for that employee + doctor + month ----
-    const covered = new Set([
-      ...entryRows.keys(),
-      ...legacyRows.map((r) => `${r.employee}|${r.doctor}|${ymOf(r.date)}`),
+    // ---- budgets ----
+    // Group managers pay doctors but do not enter prescriptions: the rep did.
+    // A budget whose own employee has no prescription line for that doctor +
+    // month is ATTACHED to the rep's line of the same doctor + month (a rep of
+    // the same group first). Only when there is no such rep line (or more than
+    // one) does the budget get a row of its own.
+    const bRange = { $gte: new Date(+fromDate - H12), $lte: toDate };
+    const visibleDoctors = [...new Set([...entryRows.values(), ...legacyRows].map((r) => r.doctor))];
+    const [budgetsMine, budgetsOnVisible] = await Promise.all([
+      Budget.find({ ...who, isActive: { $ne: false }, date: bRange }).select("employee doctor date paidAmount advanceAmount").lean(),
+      visibleDoctors.length
+        ? Budget.find({ doctor: { $in: visibleDoctors }, isActive: { $ne: false }, date: bRange }).select("employee doctor date paidAmount advanceAmount").lean()
+        : [],
     ]);
-    const budgetOnly = await Budget.find({ ...who, isActive: { $ne: false }, date: { $gte: new Date(+fromDate - H12), $lte: toDate } })
-      .select("employee doctor date")
-      .lean();
+    const mineIds = new Set(budgetsMine.map((b) => String(b._id)));
+    const budgetsAll = [...new Map([...budgetsMine, ...budgetsOnVisible].map((b) => [String(b._id), b])).values()]
+      .filter((b) => b.employee && b.doctor && b.date);
+
+    // who has a prescription line for these doctors (in the whole database, not only this filter)
+    const OIDb = Budget.base.Types.ObjectId;
+    const bDoctors = [...new Set(budgetsAll.map((b) => String(b.doctor)))];
+    const lines = bDoctors.length
+      ? await DoctorEntryItem.aggregate([
+          { $match: { doctor: { $in: bDoctors.map((id) => new OIDb(id)) }, period: { $gte: new Date(+fromDate - H12), $lte: new Date(+toDate - H12) } } },
+          { $group: { _id: { e: "$employee", d: "$doctor", p: "$period" } } },
+        ])
+      : [];
+    const lineKeys = new Set();
+    const repsByDoctorMonth = new Map();
+    for (const l of lines) {
+      const dm = `${l._id.d}|${ymOf(l._id.p)}`;
+      lineKeys.add(`${l._id.e}|${dm}`);
+      if (!repsByDoctorMonth.has(dm)) repsByDoctorMonth.set(dm, new Set());
+      repsByDoctorMonth.get(dm).add(String(l._id.e));
+    }
+    const groupEmpIds = [...new Set([...budgetsAll.map((b) => String(b.employee)), ...lines.map((l) => String(l._id.e))])];
+    const groupEmps = groupEmpIds.length ? await Employee.find({ _id: { $in: groupEmpIds } }).select("firstName lastName group").lean() : [];
+    const groupOf = new Map(groupEmps.map((e) => [String(e._id), String(e.group || "")]));
+    const shortName = new Map(groupEmps.map((e) => [String(e._id), [e.firstName, e.lastName].filter(Boolean).join(" ")]));
+
+    const attached = new Map(); // rep line key -> { paid, delta, by:Set(names) }
+    const extraKeys = new Set(); // rep lines to show because a shown budget went onto them
+    const ownRowWhy = new Map(); // budget key -> "noPrescription" | "multipleReps"
+    for (const b of budgetsAll) {
+      const emp = String(b.employee);
+      const dm = `${b.doctor}|${ymOf(b.date)}`;
+      if (lineKeys.has(`${emp}|${dm}`)) continue; // the employee has their own line: normal case
+      const reps = [...(repsByDoctorMonth.get(dm) || [])].filter((e) => e !== emp);
+      const sameGroup = reps.filter((e) => groupOf.get(e) && groupOf.get(e) === groupOf.get(emp));
+      const pick = sameGroup.length ? sameGroup : reps;
+      if (pick.length === 1) {
+        const target = `${pick[0]}|${dm}`;
+        const a = attached.get(target) || { paid: 0, delta: 0, by: new Set() };
+        a.paid += b.paidAmount || 0;
+        a.delta += b.advanceAmount || 0;
+        a.by.add(shortName.get(emp) || "—");
+        attached.set(target, a);
+        if (mineIds.has(String(b._id)) && !entryRows.has(target)) extraKeys.add(target);
+      } else if (mineIds.has(String(b._id))) {
+        ownRowWhy.set(`${emp}|${dm}`, pick.length ? "multipleReps" : "noPrescription");
+      }
+    }
+
+    // rep lines that are not in this filter, but carry a budget that is (e.g. searching the manager)
+    if (extraKeys.size) {
+      const ks = [...extraKeys].map((k) => k.split("|"));
+      const extra = await DoctorEntryItem.find({
+        employee: { $in: [...new Set(ks.map((k) => k[0]))] },
+        doctor: { $in: [...new Set(ks.map((k) => k[1]))] },
+        period: { $gte: new Date(+fromDate - H12), $lte: new Date(+toDate - H12) },
+      }).select("employee doctor drug period quota prescription sale coefficient budget totalBudget").lean();
+      const missingDrugs = [...new Set(extra.map((i) => String(i.drug)))].filter((id) => !drugById.has(id));
+      if (missingDrugs.length) {
+        (await Drug.find({ _id: { $in: missingDrugs } }).select("name price bonus").lean()).forEach((d) => drugById.set(String(d._id), d));
+      }
+      for (const it of extra) {
+        const k = `${it.employee}|${it.doctor}|${ymOf(it.period)}`;
+        if (!extraKeys.has(k)) continue;
+        if (!entryRows.has(k)) entryRows.set(k, { key: k, source: "entry", employee: String(it.employee), doctor: String(it.doctor), date: it.period, items: [] });
+        entryRows.get(k).items.push(it);
+      }
+    }
+
     const budgetRows = new Map();
-    for (const b of budgetOnly) {
-      if (!b.employee || !b.doctor || !b.date) continue;
-      const k = `${b.employee}|${b.doctor}|${ymOf(b.date)}`;
-      if (covered.has(k) || budgetRows.has(k)) continue;
-      budgetRows.set(k, { key: `budget-${k}`, source: "budget", employee: String(b.employee), doctor: String(b.doctor), date: b.date });
+    for (const [k, why] of ownRowWhy) {
+      const [e, d] = k.split("|");
+      const b = budgetsMine.find((x) => String(x.employee) === e && String(x.doctor) === d && `${e}|${d}|${ymOf(x.date)}` === k);
+      budgetRows.set(k, { key: `budget-${k}`, source: "budget", why, employee: e, doctor: d, date: b.date });
     }
 
     // ---- names, sort, page ----
@@ -481,7 +555,9 @@ export async function getAnalytics(req, res) {
 
     const rows = pageRows.map((r) => {
       const pm = `${r.employee}|${r.doctor}|${ymOf(r.date)}`;
-      const b = paid.get(pm);
+      const own = paid.get(pm);
+      const att = attached.get(pm);
+      const b = own || att ? { paid: (own?.paid || 0) + (att?.paid || 0), delta: (own?.delta || 0) + (att?.delta || 0) } : null;
       const base = {
         _id: r.key,
         date: r.date,
@@ -489,12 +565,13 @@ export async function getAnalytics(req, res) {
         doctorName: r.doctorName,
         doctorIsBudgeted: r.doctorIsBudgeted,
         visits: visits.get(pm) || 0,
+        budgetBy: att ? [...att.by] : undefined,
       };
       if (r.source === "entry") {
         return { ...base, ...statsFromEntryItems(r.items, drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta) };
       }
       if (r.source === "budget") {
-        return { ...base, ...statsFromEntryItems([], drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta), noPrescription: true };
+        return { ...base, ...statsFromEntryItems([], drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta), noPrescription: r.why !== "multipleReps", multipleReps: r.why === "multipleReps" };
       }
       const t = legacyTargetByRow.get(String(r._id)) || { amount: 0, boxes: 0 };
       const s = legacyStats.get(`${r.doctor}_${r.employee}`) || { ...statsFromItems([]), paidAmount: 0, deltaAmount: 0 };
