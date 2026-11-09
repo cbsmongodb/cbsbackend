@@ -330,6 +330,7 @@ async function budgetsByPairMonth(rows) {
   const budgets = await Budget.find({
     employee: { $in: [...new Set(rows.map((r) => r.employee))] },
     doctor: { $in: [...new Set(rows.map((r) => r.doctor))] },
+    isActive: { $ne: false },
     date: { $gte: new Date(Math.min(...months.map((m) => +m[0]))), $lte: new Date(Math.max(...months.map((m) => +m[1]))) },
   }).select("employee doctor date paidAmount advanceAmount").lean();
   for (const b of budgets) {
@@ -415,8 +416,24 @@ export async function getAnalytics(req, res) {
       legacyRows.push({ key: `legacy-${d._id}`, source: "legacy", _id: d._id, employee: String(d.employee), doctor: String(d.doctor), date: d.date });
     }
 
+    // ---- budgets with no prescription line for that employee + doctor + month ----
+    const covered = new Set([
+      ...entryRows.keys(),
+      ...legacyRows.map((r) => `${r.employee}|${r.doctor}|${ymOf(r.date)}`),
+    ]);
+    const budgetOnly = await Budget.find({ ...who, isActive: { $ne: false }, date: { $gte: new Date(+fromDate - H12), $lte: toDate } })
+      .select("employee doctor date")
+      .lean();
+    const budgetRows = new Map();
+    for (const b of budgetOnly) {
+      if (!b.employee || !b.doctor || !b.date) continue;
+      const k = `${b.employee}|${b.doctor}|${ymOf(b.date)}`;
+      if (covered.has(k) || budgetRows.has(k)) continue;
+      budgetRows.set(k, { key: `budget-${k}`, source: "budget", employee: String(b.employee), doctor: String(b.doctor), date: b.date });
+    }
+
     // ---- names, sort, page ----
-    const all = [...entryRows.values(), ...legacyRows];
+    const all = [...entryRows.values(), ...legacyRows, ...budgetRows.values()];
     const [emps, docs] = await Promise.all([
       Employee.find({ _id: { $in: [...new Set(all.map((r) => r.employee))] } }).select("firstName lastName").lean(),
       Doctor.find({ _id: { $in: [...new Set(all.map((r) => r.doctor))] } }).select("firstName lastName isBudgeted").lean(),
@@ -475,6 +492,9 @@ export async function getAnalytics(req, res) {
       };
       if (r.source === "entry") {
         return { ...base, ...statsFromEntryItems(r.items, drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta) };
+      }
+      if (r.source === "budget") {
+        return { ...base, ...statsFromEntryItems([], drugById), paidAmount: r2(b?.paid), deltaAmount: r2(b?.delta) };
       }
       const t = legacyTargetByRow.get(String(r._id)) || { amount: 0, boxes: 0 };
       const s = legacyStats.get(`${r.doctor}_${r.employee}`) || { ...statsFromItems([]), paidAmount: 0, deltaAmount: 0 };
