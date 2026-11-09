@@ -23,6 +23,7 @@ import salesEntriesRoutes from "./routes/sales/salesEntries.routes.js";
 import doctorEntryItemsRoutes from "./routes/sales/doctorEntryItems.routes.js";
 import myEntriesRoutes from "./routes/sales/myEntries.routes.js";
 import drugBonusRoutes from "./routes/drugBonus/drugBonus.routes.js";
+import bonusesRoutes from "./routes/bonuses/bonuses.routes.js";
 import budgetRoutes from "./routes/budget/budget.routes.js";
 import { budgetRequirdRoutes, budgetRequestRoutes } from "./routes/budget/budgetWorkflow.routes.js";
 import attendanceRoutes from "./routes/attendance/attendance.routes.js";
@@ -141,6 +142,7 @@ app.use(
   app.use("/api/doctor-entry-items", requirePermission("sales"), doctorEntryItemsRoutes);
   app.use("/api/my-entries", myEntriesRoutes);
   app.use("/api/drug-bonuses", requirePermission("sales"), drugBonusRoutes);
+  app.use("/api/bonuses", requirePermission("drug_bonuses"), bonusesRoutes);
   app.use("/api/budgets", requirePermission("budgets"), budgetRoutes);
   app.use("/api/budget-requireds", requirePermission("budget_requests"), budgetRequirdRoutes);
   app.use("/api/budget-requests", requirePermission("budget_requests"), budgetRequestRoutes);

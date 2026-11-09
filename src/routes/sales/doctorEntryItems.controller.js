@@ -9,6 +9,7 @@ import DrugBonus from "../../models/DrugBonus.js";
 import Drug from "../../models/Drug.js";
 import { budgetSumsByDoctor } from "../../utils/budgetSync.js";
 import { getScopeEmployeeIds, canSeeEmployee } from "../../utils/groupVisibility.js";
+import { drugBonuses, doctorBonuses, resolveBonuses, parseMonth } from "../../utils/bonuses.js";
 
 function normalizeToMonthStart(dateLike) {
   let value = dateLike;
@@ -64,18 +65,9 @@ async function pharmacySalesByDrug(employeeId, period) {
 // bonus per box for a month: the drug's monthly bonus (Drugs page "Bonuses by month"),
 // otherwise the drug's general bonus -> Map(drugId -> value). Drugs with neither are left out.
 async function bonusesForPeriod(drugIds, period) {
-  const start = new Date(period);
-  const ids = [...new Set(drugIds.map(String))];
-  const map = new Map();
-  if (!ids.length) return map;
-  const monthly = await DrugBonus.find({
-    drug: { $in: ids },
-    period: { $gte: new Date(start.getTime() - 86400000), $lte: new Date(start.getTime() + 86400000) },
-  }).select("drug value").lean();
-  monthly.forEach((b) => map.set(String(b.drug), b.value));
-  const drugs = await Drug.find({ _id: { $in: ids.filter((id) => !map.has(id)) } }).select("bonus").lean();
-  drugs.forEach((d) => { if (d.bonus) map.set(String(d._id), d.bonus); });
-  return map;
+  // Bonuses page: month bonus -> old general bonus -> default 1 (utils/bonuses.js)
+  const byDrug = await drugBonuses(parseMonth(period), drugIds);
+  return new Map([...byDrug].map(([id, b]) => [id, b.value]));
 }
 
 export async function recalculateForPeriod(employeeId, period) {
@@ -205,6 +197,7 @@ export async function getListing(req, res) {
       drugTotals: [...summaryByDrug.values()],
       pharmacySales: Object.fromEntries(pharmacy),
       bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id").lean()).map((d) => d._id), periodDate)),
+      doctorBonuses: Object.fromEntries(await doctorBonuses(parseMonth(periodDate))),
     });
   } catch (err) {
     console.error("getListing failed:", err);
@@ -277,9 +270,9 @@ export async function submitEntries(req, res) {
       if (fromBudgets) return { issuedBudget: fromBudgets, issuedBudgetSource: "budget" };
       return { issuedBudget: 0 };
     };
-    const bonus = await bonusesForPeriod(
-      doctorEntries.flatMap((e) => (e.drugs || []).map((d) => d.drugId)).filter(Boolean),
-      periodDate
+    const bonus = await resolveBonuses(
+      parseMonth(periodDate),
+      doctorEntries.flatMap((e) => (e.drugs || []).filter((d) => d.drugId).map((d) => ({ doctor: e.doctorId, drug: d.drugId })))
     );
 
     // one write per doctor+drug (last one wins, like before) and ONE summary
@@ -314,8 +307,8 @@ export async function submitEntries(req, res) {
             prescription: drugRow.prescription || 0,
             // sale / budget: only when the form sent it (new rows don't -> stored values stay)
             ...(drugRow.sale !== undefined ? { sale: drugRow.sale || 0 } : {}),
-            ...(bonus.has(String(drugRow.drugId))
-              ? { budget: bonus.get(String(drugRow.drugId)) }
+            ...(bonus.has(`${entry.doctorId}|${drugRow.drugId}`)
+              ? { budget: bonus.get(`${entry.doctorId}|${drugRow.drugId}`) }
               : drugRow.budget !== undefined ? { budget: drugRow.budget || 0 } : {}),
           },
           { upsert: true, new: true, runValidators: true }
