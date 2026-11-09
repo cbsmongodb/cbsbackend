@@ -1,4 +1,5 @@
 import PlanConfiguration from "../../models/PlanConfiguration.js";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import PlanConfigurationDoctor from "../../models/PlanConfigurationDoctor.js";
 import Doctor from "../../models/Doctor.js";
 import Address from "../../models/Address.js";
@@ -62,7 +63,7 @@ export async function getAllPlannings(req, res) {
       const [hospitalIds, pharmacyIds, employeeIds] = await Promise.all([
         Hospital.find({ name: rx }).distinct("_id"),
         Pharmacy.find({ pharmacyName: rx }).distinct("_id"),
-        Employee.find({ $or: [{ firstName: rx }, { lastName: rx }] }).distinct("_id"),
+        Employee.find(nameSearchFilter(search, ["firstName", "lastName"])).distinct("_id"),
       ]);
       filter.$or = [
         { hospital: { $in: hospitalIds } },

@@ -1,4 +1,5 @@
 import EmployeeSale from "../../models/EmployeeSale.js";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
@@ -42,9 +43,7 @@ export async function getAllEmployeeSales(req, res) {
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
-      const matchingEmployees = await Employee.find({
-        $or: [{ firstName: regex }, { lastName: regex }],
-      }).distinct("_id");
+      const matchingEmployees = await Employee.find(nameSearchFilter(search, ["firstName", "lastName"])).distinct("_id");
       filter.employee = filter.employee || { $in: matchingEmployees };
     }
 

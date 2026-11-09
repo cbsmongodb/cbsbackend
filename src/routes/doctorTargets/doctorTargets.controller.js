@@ -1,4 +1,5 @@
 import DoctorTarget from "../../models/DoctorTarget.js";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
@@ -23,8 +24,8 @@ export async function getAllDoctorTargets(req, res) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
       const [matchingDoctors, matchingEmployees] = await Promise.all([
-        Doctor.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
-        Employee.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
+        Doctor.find(nameSearchFilter(search, ["firstName", "lastName", "uniqueNumber"])).distinct("_id"),
+        Employee.find(nameSearchFilter(search, ["firstName", "lastName"])).distinct("_id"),
       ]);
       filter.$or = [
         { doctor: { $in: matchingDoctors } },

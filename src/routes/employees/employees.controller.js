@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import Employee from "../../models/Employee.js";
 import Role from "../../models/Role.js";
 import Designation from "../../models/Designation.js";
@@ -44,7 +45,7 @@ export async function getAllEmployees(req, res) {
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
-      filter.$or = [{ firstName: regex }, { lastName: regex }];
+      Object.assign(filter, nameSearchFilter(search, ["firstName", "lastName"]));
     }
 
     // group/section-scoped visibility — admins see everyone; a Section head

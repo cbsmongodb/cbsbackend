@@ -1,4 +1,5 @@
 import express from "express";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import Hospital from "../../models/Hospital.js";
 import Region from "../../models/Region.js";
 import Doctor from "../../models/Doctor.js";
@@ -245,7 +246,7 @@ export default function hospitalsRoutes(io) {
       const filter = { "hospitals.hospital": { $ne: req.params.id }, isActive: true };
       if (q) {
         const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-        filter.$or = [{ firstName: rx }, { lastName: rx }, { uniqueNumber: rx }];
+        Object.assign(filter, nameSearchFilter(q, ["firstName", "lastName", "uniqueNumber"]));
       }
       const doctors = await Doctor.find(filter)
         .select("firstName lastName uniqueNumber")

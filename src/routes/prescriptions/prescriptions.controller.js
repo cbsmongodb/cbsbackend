@@ -1,4 +1,5 @@
 import Prescription from "../../models/Prescription.js";
+import { nameSearchFilter } from "../../utils/nameSearch.js";
 import DrugPrescription from "../../models/DrugPrescription.js";
 import Employee from "../../models/Employee.js";
 import Doctor from "../../models/Doctor.js";
@@ -38,8 +39,8 @@ export async function getAllPrescriptions(req, res) {
       const regex = new RegExp(escaped, "i");
 
       const [matchingEmployees, matchingDoctors, matchingDrugs] = await Promise.all([
-        Employee.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
-        Doctor.find({ $or: [{ firstName: regex }, { lastName: regex }] }).distinct("_id"),
+        Employee.find(nameSearchFilter(search, ["firstName", "lastName"])).distinct("_id"),
+        Doctor.find(nameSearchFilter(search, ["firstName", "lastName", "uniqueNumber"])).distinct("_id"),
         Drug.find({ name: regex }).distinct("_id"),
       ]);
 
