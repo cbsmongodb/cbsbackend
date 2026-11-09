@@ -125,6 +125,55 @@ router.put("/doctor", async (req, res) => {
   }
 });
 
+// PUT /api/bonuses/batch  { month, drugs: [{ drug, value }], doctors: [{ drug, doctor, value }] }
+// the page's "Save" button: everything at once, checked first, then one recalculation.
+// value empty/null -> removed (the drug goes back to its inherited bonus / the doctor bonus is deleted)
+router.put("/batch", async (req, res) => {
+  try {
+    const month = monthOr400(req, res);
+    if (!month) return;
+    const drugs = Array.isArray(req.body.drugs) ? req.body.drugs : [];
+    const doctors = Array.isArray(req.body.doctors) ? req.body.doctors : [];
+    const bad = [];
+    const drugRows = drugs.map((d) => ({ drug: d.drug, value: num(d.value) }));
+    const docRows = doctors.map((d) => ({ drug: d.drug, doctor: d.doctor, value: num(d.value) }));
+    drugRows.forEach((r) => { if (!isId(r.drug) || Number.isNaN(r.value)) bad.push(r.drug); });
+    docRows.forEach((r) => { if (!isId(r.drug) || !isId(r.doctor) || Number.isNaN(r.value)) bad.push(`${r.drug}|${r.doctor}`); });
+    if (bad.length) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი", bad });
+    if (!drugRows.length && !docRows.length) return res.json({ ok: true, saved: 0, recalculated: 0 });
+
+    for (const r of drugRows) {
+      if (r.value === null) {
+        await DrugBonus.deleteMany({ drug: r.drug, period: monthWindow(month) });
+      } else {
+        await DrugBonus.deleteMany({ drug: r.drug, period: monthWindow(month), $nor: [{ period: monthStart(month) }] });
+        await DrugBonus.findOneAndUpdate(
+          { drug: r.drug, period: monthStart(month) },
+          { $set: { value: r.value, setBy: req.employee?._id } },
+          { upsert: true, setDefaultsOnInsert: true }
+        );
+      }
+    }
+    for (const r of docRows) {
+      if (r.value === null) {
+        await DoctorDrugBonus.deleteMany({ drug: r.drug, doctor: r.doctor, period: monthWindow(month) });
+      } else {
+        await DoctorDrugBonus.findOneAndUpdate(
+          { drug: r.drug, doctor: r.doctor, period: monthStart(month) },
+          { $set: { value: r.value, setBy: req.employee?._id } },
+          { upsert: true, setDefaultsOnInsert: true }
+        );
+      }
+    }
+    const touched = [...new Set([...drugRows, ...docRows].map((r) => String(r.drug)))];
+    const r = await restampBonuses(month, { drugs: touched });
+    res.json({ ok: true, saved: drugRows.length + docRows.length, recalculated: r.changed });
+  } catch (err) {
+    console.error("save bonuses failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // POST /api/bonuses/copy  { from: "2026-10", to: "2026-11" }
 // copies every bonus that is set in "from" and NOT set yet in "to" (nothing is overwritten)
 router.post("/copy", async (req, res) => {

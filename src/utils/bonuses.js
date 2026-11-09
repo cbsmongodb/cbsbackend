@@ -80,9 +80,10 @@ export async function resolveBonuses(month, pairs) {
 // write the current bonus onto a month's prescription lines (optionally only one
 // drug / one doctor) and recalculate the employees whose numbers changed.
 // dryRun -> only counts. Returns { lines, changed, employees }.
-export async function restampBonuses(month, { drug, doctor, dryRun = false } = {}) {
+export async function restampBonuses(month, { drug, drugs, doctor, dryRun = false } = {}) {
   const filter = { period: monthWindow(month) };
   if (drug) filter.drug = drug;
+  if (drugs?.length) filter.drug = { $in: drugs };
   if (doctor) filter.doctor = doctor;
   const items = await DoctorEntryItem.find(filter).select("employee doctor drug period budget").lean();
   const resolved = await resolveBonuses(month, items.map((i) => ({ doctor: i.doctor, drug: i.drug })));
