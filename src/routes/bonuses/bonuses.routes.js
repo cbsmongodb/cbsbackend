@@ -10,6 +10,16 @@ import "../../models/Profile.js";
 import {
   parseMonth, monthStart, monthWindow, monthLabel, hasDefault, DEFAULT_BONUS, restampBonuses,
 } from "../../utils/bonuses.js";
+import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
+
+// every division sees and changes only its own drugs (the same rule as the Drugs page);
+// admin, director, finance, office see all. null = no limit.
+async function allowedDrugIds(req) {
+  if (seesEverything(req.employee)) return null;
+  return new Set((await getVisibleDrugIds(req.employee)).map(String));
+}
+const notMine = (allowed, ids) => allowed && ids.some((id) => !allowed.has(String(id)));
+const FORBIDDEN = { error: "ეს მედიკამენტი თქვენს დივიზიონს არ ეკუთვნის" };
 
 const router = express.Router();
 const isId = (x) => mongoose.isValidObjectId(x);
@@ -30,8 +40,11 @@ router.get("/", async (req, res) => {
   try {
     const month = monthOr400(req, res);
     if (!month) return;
+    const allowed = await allowedDrugIds(req);
+    const drugFilter = { isActive: { $ne: false } };
+    if (allowed) drugFilter._id = { $in: [...allowed] };
     const [drugs, monthly, overrides] = await Promise.all([
-      Drug.find({ isActive: { $ne: false } }).select("name price bonus").sort({ name: 1 }).lean(),
+      Drug.find(drugFilter).select("name price bonus").sort({ name: 1 }).lean(),
       DrugBonus.find({ period: monthWindow(month) }).select("drug value").lean(),
       DoctorDrugBonus.find({ period: monthWindow(month) })
         .select("doctor drug value")
@@ -80,6 +93,7 @@ router.put("/drug", async (req, res) => {
     const value = num(req.body.value);
     if (!isId(drug)) return res.status(400).json({ error: "drug is required" });
     if (Number.isNaN(value)) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი" });
+    if (notMine(await allowedDrugIds(req), [drug])) return res.status(403).json(FORBIDDEN);
     if (value === null) {
       await DrugBonus.deleteOne({ drug, period: monthWindow(month) });
     } else {
@@ -108,6 +122,7 @@ router.put("/doctor", async (req, res) => {
     const value = num(req.body.value);
     if (!isId(drug) || !isId(doctor)) return res.status(400).json({ error: "drug and doctor are required" });
     if (Number.isNaN(value)) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი" });
+    if (notMine(await allowedDrugIds(req), [drug])) return res.status(403).json(FORBIDDEN);
     if (value === null) {
       await DoctorDrugBonus.deleteMany({ drug, doctor, period: monthWindow(month) });
     } else {
@@ -140,6 +155,7 @@ router.put("/batch", async (req, res) => {
     drugRows.forEach((r) => { if (!isId(r.drug) || Number.isNaN(r.value)) bad.push(r.drug); });
     docRows.forEach((r) => { if (!isId(r.drug) || !isId(r.doctor) || Number.isNaN(r.value)) bad.push(`${r.drug}|${r.doctor}`); });
     if (bad.length) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი", bad });
+    if (notMine(await allowedDrugIds(req), [...drugRows, ...docRows].map((r) => r.drug))) return res.status(403).json(FORBIDDEN);
     if (!drugRows.length && !docRows.length) return res.json({ ok: true, saved: 0, recalculated: 0 });
 
     for (const r of drugRows) {
@@ -181,11 +197,13 @@ router.post("/copy", async (req, res) => {
     const from = parseMonth(req.body.from);
     const to = parseMonth(req.body.to);
     if (!from || !to) return res.status(400).json({ error: "from and to are required (YYYY-MM)" });
+    const allowed = await allowedDrugIds(req);
+    const only = allowed ? { drug: { $in: [...allowed] } } : {};
     const [srcDrug, dstDrug, srcDoc, dstDoc] = await Promise.all([
-      DrugBonus.find({ period: monthWindow(from) }).select("drug value").lean(),
-      DrugBonus.find({ period: monthWindow(to) }).select("drug").lean(),
-      DoctorDrugBonus.find({ period: monthWindow(from) }).select("drug doctor value").lean(),
-      DoctorDrugBonus.find({ period: monthWindow(to) }).select("drug doctor").lean(),
+      DrugBonus.find({ ...only, period: monthWindow(from) }).select("drug value").lean(),
+      DrugBonus.find({ ...only, period: monthWindow(to) }).select("drug").lean(),
+      DoctorDrugBonus.find({ ...only, period: monthWindow(from) }).select("drug doctor value").lean(),
+      DoctorDrugBonus.find({ ...only, period: monthWindow(to) }).select("drug doctor").lean(),
     ]);
     const haveDrug = new Set(dstDrug.map((b) => String(b.drug)));
     const haveDoc = new Set(dstDoc.map((b) => `${b.doctor}|${b.drug}`));
@@ -197,7 +215,8 @@ router.post("/copy", async (req, res) => {
     if (newDoc.length) {
       await DoctorDrugBonus.insertMany(newDoc.map((b) => ({ drug: b.drug, doctor: b.doctor, period: monthStart(to), value: b.value, setBy: req.employee?._id })), { ordered: false });
     }
-    const r = await restampBonuses(to);
+    const touched = [...new Set([...newDrug, ...newDoc].map((b) => String(b.drug)))];
+    const r = touched.length ? await restampBonuses(to, { drugs: touched }) : { changed: 0 };
     res.json({ ok: true, copiedDrugs: newDrug.length, copiedDoctors: newDoc.length, recalculated: r.changed });
   } catch (err) {
     console.error("copy bonuses failed:", err);
