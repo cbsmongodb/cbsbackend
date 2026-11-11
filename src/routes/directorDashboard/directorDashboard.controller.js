@@ -120,8 +120,8 @@ export async function getStockAvailability(req, res) {
     // the table handle sort/search/pagination client-side — snappier UX
     const [allDrugs, lowStock, expired] = await Promise.all([
       Drug.find({ isActive: true }).select("name stocks").sort({ name: 1 }).lean(),
-      Drug.checkLowStock(),
-      Drug.checkExpiredDrugs(),
+      Drug.find({ isActive: true, stocks: { $lt: 100 } }).select("name stocks").lean().then((a) => a.map((d) => ({ id: d._id, name: d.name, stock: d.stocks }))),
+      Drug.find({ isActive: true, expired: true }).select("name").lean().then((a) => a.map((d) => ({ id: d._id, name: d.name, status: "Expired" }))),
     ]);
 
     const docs = allDrugs.map((d) => ({ name: d.name, stocks: d.stocks }));

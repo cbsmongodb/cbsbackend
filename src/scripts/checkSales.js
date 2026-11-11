@@ -53,6 +53,14 @@ console.log(`\n-- 10 biggest lines`); big.sort((a, b) => b.amt - a.amt).slice(0,
 const dups = [...dup].filter(([, c]) => c > 1);
 console.log(`\n-- identical lines entered more than once (same person+drug+day+boxes): ${dups.length}`);
 dups.slice(0, 15).forEach(([k, c]) => { const [e, d, day, b] = k.split("|"); console.log(`  x${c}: ${nm(e)} | ${drugs.get(d)?.name} | ${day} | ${b} boxes`); });
+{
+  const per = new Map();
+  for (const l of lines) { const k = `${l.medicineTargatableId}|${l.drug}`; (per.get(k) || per.set(k, []).get(k)).push(l.totalNoOfBoxes || 0); }
+  const twice = [...per].filter(([, a]) => a.length > 1);
+  console.log(`\n-- SAME drug entered more than once inside ONE sale: ${twice.length}`);
+  twice.slice(0, 25).forEach(([k, a]) => { const [sid, did] = k.split("|"); const s2 = saleById.get(sid); console.log(`  ${nm(s2.employee)} | ${drugs.get(did)?.name} | ${a.join(" + ")} = ${a.reduce((x, y) => x + y, 0)}`); });
+  console.log(`  boxes that exist only because of the repeats: ${twice.reduce((t, [, a]) => t + a.slice(1).reduce((x, y) => x + y, 0), 0)}`);
+}
 console.log(`\n-- lines with NON-whole boxes: ${frac.length}`); frac.slice(0, 20).forEach((x) => console.log("  " + x));
 console.log(`\n-- prices: active drugs with price 0 that were sold: ${[...new Set(lines.filter((l) => drugs.get(String(l.drug))?.isActive && !drugs.get(String(l.drug))?.price).map((l) => drugs.get(String(l.drug)).name))].join(", ") || "none"}`);
 await mongoose.disconnect();
