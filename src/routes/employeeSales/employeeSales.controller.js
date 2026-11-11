@@ -2,7 +2,8 @@ import EmployeeSale from "../../models/EmployeeSale.js";
 import { nameSearchFilter } from "../../utils/nameSearch.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
-import { getVisibleDrugIds, seesEverything } from "../../utils/groupVisibility.js";
+import { getVisibleDrugIds, seesEverything, applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
+const FORBIDDEN = { error: "ეს თანამშრომელი თქვენს დივიზიონს არ ეკუთვნის" };
 import Drug from "../../models/Drug.js";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import { recalculateForPeriod } from "../sales/doctorEntryItems.controller.js";
@@ -46,6 +47,9 @@ export async function getAllEmployeeSales(req, res) {
       const matchingEmployees = await Employee.find(nameSearchFilter(search, ["firstName", "lastName"])).distinct("_id");
       filter.employee = filter.employee || { $in: matchingEmployees };
     }
+
+    // each division sees only its own people (admin, director, finance... see all)
+    await applyEmployeeScope(req.employee, filter);
 
     const pageNum = Math.max(parseInt(page) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
@@ -95,6 +99,9 @@ export async function getAllEmployeeSales(req, res) {
 
 export async function deleteEmployeeSale(req, res) {
   try {
+    const own = await EmployeeSale.findById(req.params.id).select("employee").lean();
+    if (!own) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, own.employee))) return res.status(403).json(FORBIDDEN);
     await MedicineTarget.deleteMany({
       medicineTargatableType: "EmployeeSale",
       medicineTargatableId: req.params.id,
@@ -134,6 +141,7 @@ export async function createEmployeeSale(req, res) {
     if (!employee || !date) return res.status(400).json({ error: "employee and date are required" });
     const list = Array.isArray(items) ? items.filter((i) => i.drug && Number(i.totalNoOfBoxes) > 0) : [];
     if (list.length === 0) return res.status(400).json({ error: "at least one drug with boxes is required" });
+    if (!(await canSeeEmployee(req.employee, employee))) return res.status(403).json(FORBIDDEN);
 
     const sale = await EmployeeSale.create({ employee, date: new Date(date) });
     const rows = list.map((i) => ({
@@ -156,6 +164,7 @@ export async function getEmployeeSaleById(req, res) {
   try {
     const sale = await EmployeeSale.findById(req.params.id).populate("employee", "firstName lastName name").lean();
     if (!sale) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, sale.employee))) return res.status(403).json(FORBIDDEN);
     const rows = await MedicineTarget.find({
       medicineTargatableType: "EmployeeSale",
       medicineTargatableId: sale._id,
@@ -185,6 +194,10 @@ export async function updateEmployeeSale(req, res) {
     if (list.length === 0) return res.status(400).json({ error: "at least one drug with boxes is required" });
 
     const before = await EmployeeSale.findById(req.params.id).select("employee date").lean();
+    if (!before) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, before.employee)) || !(await canSeeEmployee(req.employee, employee))) {
+      return res.status(403).json(FORBIDDEN);
+    }
     const sale = await EmployeeSale.findByIdAndUpdate(req.params.id, { employee, date: new Date(date) }, { new: true });
     if (!sale) return res.status(404).json({ error: "Not found" });
 
