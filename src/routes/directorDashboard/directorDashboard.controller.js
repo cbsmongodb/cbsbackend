@@ -4,57 +4,109 @@ import Drug from "../../models/Drug.js";
 import Order from "../../models/Order.js";
 import Doctor from "../../models/Doctor.js";
 
-// GET /api/director-dashboard/product-sale?fromDate=&toDate=&page=&limit=
+// GET /api/director-dashboard/product-sale?month=YYYY-MM
+// ONE month, only ACTIVE drugs and ACTIVE employees:
+//   saleBoxes / totalSaleAmount = what the reps entered on "Sales from pharmacies" (EmployeeSale) in that month
+//   monthlyTarget               = the month's plan the employees entered (EmployeeTarget)
+//   prescriptions               = prescriptions entered in the month (DoctorEntryItem)
+//   divisions                   = the month's sales by division (for the share chart)
 export async function getProductSale(req, res) {
   try {
-    const now = new Date();
-    const fromDate = req.query.fromDate
-      ? new Date(req.query.fromDate)
-      : new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const toDate = req.query.toDate
-      ? new Date(req.query.toDate)
-      : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const { default: Employee } = await import("../../models/Employee.js");
+    const { default: Group } = await import("../../models/Group.js");
+    const { default: Section } = await import("../../models/Section.js");
+    const { default: EmployeeSale } = await import("../../models/EmployeeSale.js");
+    const { default: EmployeeTarget } = await import("../../models/EmployeeTarget.js");
+    const { default: MedicineTarget } = await import("../../models/MedicineTarget.js");
+    const { default: DoctorEntryItem } = await import("../../models/DoctorEntryItem.js");
+    const { getScopeEmployeeIds } = await import("../../utils/groupVisibility.js");
 
-    const prescriptionIds = await Prescription.find({
-      date: { $gte: fromDate, $lte: toDate },
-    }).distinct("_id");
+    const H12 = 12 * 3600e3;
+    const tb = new Date(Date.now() + 4 * 3600e3);
+    const mm = String(req.query.month || "").match(/^(\d{4})-(\d{2})$/);
+    const y = mm ? +mm[1] : tb.getUTCFullYear();
+    const m = mm ? +mm[2] - 1 : tb.getUTCMonth();
+    const win = { $gte: new Date(Date.UTC(y, m, 1) - H12), $lt: new Date(Date.UTC(y, m + 1, 1) - H12) };
+    const r2 = (n) => Math.round((n || 0) * 100) / 100;
 
-    const items = await DrugPrescription.find({
-      prescription: { $in: prescriptionIds },
-    }).populate("drug", "name price stocks monthlyTarget").lean();
+    const [drugs, emps, sections, groups] = await Promise.all([
+      Drug.find({ isActive: true }).select("name price stocks").lean(),
+      Employee.find({ isActive: true }).select("firstName lastName group").lean(),
+      Section.find({ name: /DIVIZION/i }).select("name head").lean(),
+      Group.find({}).select("section").lean(),
+    ]);
+    const scope = await getScopeEmployeeIds(req.employee);
+    const scopeSet = scope ? new Set(scope.map(String)) : null;
+    const actEmps = emps.filter((e) => !scopeSet || scopeSet.has(String(e._id)));
+    const empIds = actEmps.map((e) => e._id);
+    const drugIds = drugs.map((d) => d._id);
+    const drugById = new Map(drugs.map((d) => [String(d._id), d]));
+
+    // who belongs to which division
+    const groupDiv = new Map(groups.map((g) => [String(g._id), String(g.section || "")]));
+    const secName = new Map(sections.map((x) => [String(x._id), x.name]));
+    const empDiv = new Map();
+    actEmps.forEach((e) => empDiv.set(String(e._id), secName.get(groupDiv.get(String(e.group || ""))) || null));
+    sections.forEach((x) => { if (x.head && empDiv.has(String(x.head))) empDiv.set(String(x.head), x.name); });
+
+    // lines of EmployeeSale / EmployeeTarget of the month -> boxes per employee + drug
+    const lines = async (Model, type) => Model.aggregate([
+      { $match: { date: win, employee: { $in: empIds } } },
+      { $lookup: { from: MedicineTarget.collection.name, localField: "_id", foreignField: "medicineTargatableId", as: "l" } },
+      { $unwind: "$l" },
+      { $match: { "l.medicineTargatableType": type, "l.drug": { $in: drugIds } } },
+      { $group: { _id: { e: "$employee", d: "$l.drug" }, boxes: { $sum: "$l.totalNoOfBoxes" } } },
+    ]).allowDiskUse(true);
+
+    const [saleRows, targetRows, rxRows] = await Promise.all([
+      lines(EmployeeSale, "EmployeeSale"),
+      lines(EmployeeTarget, "EmployeeTarget"),
+      DoctorEntryItem.aggregate([
+        { $match: { period: win, employee: { $in: empIds }, drug: { $in: drugIds } } },
+        { $group: { _id: "$drug", rx: { $sum: "$prescription" } } },
+      ]),
+    ]);
 
     const byDrug = new Map();
-    items.forEach((it) => {
-      if (!it.drug) return;
-      const key = String(it.drug._id);
-      const entry = byDrug.get(key) || {
-        drugName: it.drug.name,
-        openingStocks: it.drug.stocks || 0,
-        monthlyTarget: it.drug.monthlyTarget || 0,
-        saleBoxes: 0,
-        totalSaleAmount: 0,
-      };
-      const sold = it.saleBoxes || 0;
-      entry.saleBoxes += sold;
-      entry.totalSaleAmount += sold * (it.drug.price || 0);
-      byDrug.set(key, entry);
+    const row = (id) => {
+      const d = drugById.get(String(id));
+      if (!byDrug.has(String(id))) byDrug.set(String(id), {
+        drugName: d.name, openingStocks: d.stocks || 0, monthlyTarget: 0, saleBoxes: 0, prescriptions: 0, totalSaleAmount: 0,
+      });
+      return byDrug.get(String(id));
+    };
+    const divTotals = new Map();
+    saleRows.forEach((r) => {
+      const d = drugById.get(String(r._id.d));
+      if (!d) return;
+      const amount = (r.boxes || 0) * (d.price || 0);
+      const x = row(r._id.d);
+      x.saleBoxes += r.boxes || 0; x.totalSaleAmount += amount;
+      const div = empDiv.get(String(r._id.e)) || "—";
+      const dt = divTotals.get(div) || { name: div, amount: 0, boxes: 0 };
+      dt.amount += amount; dt.boxes += r.boxes || 0; divTotals.set(div, dt);
     });
+    targetRows.forEach((r) => { if (drugById.has(String(r._id.d))) row(r._id.d).monthlyTarget += r.boxes || 0; });
+    rxRows.forEach((r) => { if (drugById.has(String(r._id))) row(r._id).prescriptions += r.rx || 0; });
 
-    let rows = Array.from(byDrug.values()).map((r) => ({
-      ...r,
-      totalSaleAmount: Math.round(r.totalSaleAmount * 100) / 100,
-      openingStocks: Math.round((r.openingStocks || 0) * 100) / 100,
-      closingStocks: Math.round(((r.openingStocks || 0) - (r.saleBoxes || 0)) * 100) / 100,
-    }));
-    rows.sort((a, b) => b.totalSaleAmount - a.totalSaleAmount);
+    const rows = [...byDrug.values()].map((x) => ({
+      ...x,
+      totalSaleAmount: r2(x.totalSaleAmount),
+      closingStocks: r2((x.openingStocks || 0) - (x.saleBoxes || 0)),
+    })).sort((a, b) => b.saleBoxes - a.saleBoxes || b.totalSaleAmount - a.totalSaleAmount);
 
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
-    const total = rows.length;
-    const start = (page - 1) * limit;
-    const docs = rows.slice(start, start + limit);
-
-    res.json({ docs, total, page, pages: Math.max(Math.ceil(total / limit), 1), limit });
+    res.json({
+      month: `${y}-${String(m + 1).padStart(2, "0")}`,
+      docs: rows,
+      total: rows.length,
+      totals: {
+        amount: r2(rows.reduce((s, x) => s + x.totalSaleAmount, 0)),
+        boxes: rows.reduce((s, x) => s + x.saleBoxes, 0),
+        target: rows.reduce((s, x) => s + x.monthlyTarget, 0),
+        prescriptions: rows.reduce((s, x) => s + x.prescriptions, 0),
+      },
+      divisions: [...divTotals.values()].map((x) => ({ ...x, amount: r2(x.amount) })).sort((a, b) => b.amount - a.amount || b.boxes - a.boxes),
+    });
   } catch (err) {
     console.error("getProductSale failed:", err);
     res.status(500).json({ error: "Server error" });
