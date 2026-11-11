@@ -319,7 +319,7 @@ export async function getOverview(req, res) {
     const nowYear = new Date(Date.now() + 4 * 3600e3).getUTCFullYear();
     const year = Number(req.query.year) || nowYear;
     const scope = await getScopeEmployeeIds(req.employee);
-    const cacheKey = `${year}|${scope ? [...scope].map(String).sort().join(",") : "all"}`;
+    const cacheKey = `v2|${year}|${scope ? [...scope].map(String).sort().join(",") : "all"}`;
     const ttl = year < nowYear ? OVERVIEW_TTL_PAST : OVERVIEW_TTL_NOW;
     const hit = overviewCache.get(cacheKey);
     if (hit && !req.query.fresh && Date.now() - hit.at < ttl) {
@@ -340,9 +340,12 @@ export async function getOverview(req, res) {
       const [sections, groups, emps, drugs] = await Promise.all([
         Section.find({ name: /DIVIZION/i }).select("name head").lean(),
         Group.find({}).select("section").lean(),
-        Employee.find({}).select("firstName lastName group isActive").lean(),
-        Drug.find({}).select("name price").lean(),
+        Employee.find({ isActive: true }).select("firstName lastName group isActive").lean(),
+        Drug.find({ isActive: true }).select("name price").lean(),
       ]);
+      // ONLY active drugs and active employees are counted anywhere below
+      const activeEmpIds = emps.map((e) => e._id);
+      const activeDrugIds = drugs.map((d) => d._id);
       const groupDiv = new Map(groups.map((g) => [String(g._id), String(g.section || "")]));
       const secName = new Map(sections.map((x) => [String(x._id), x.name]));
       const empDiv = new Map();
@@ -360,11 +363,12 @@ export async function getOverview(req, res) {
       }));
 
       const saleMatch = { date: { $gte: new Date(from.getTime() - HALF), $lt: new Date(to.getTime() - HALF) } };
-      if (scopeIds) saleMatch.employee = { $in: scopeIds };
+      saleMatch.employee = { $in: scopeIds ? activeEmpIds.filter((id) => scopeIds.some((s) => String(s) === String(id))) : activeEmpIds };
       const planMatch = { period: { $gte: from, $lt: to }, status: { $in: ["i_went", "i_left", "completed"] } };
-      if (scopeIds) planMatch.performer = { $in: scopeIds };
+      planMatch.performer = { $in: scopeIds ? activeEmpIds.filter((id) => scopeIds.some((s) => String(s) === String(id))) : activeEmpIds };
       const deMatch = { period: { $gte: new Date(Date.UTC(year, 0, 1) - 86400000), $lt: new Date(Date.UTC(year + 1, 0, 1) - 86400000) } };
-      if (scopeIds) deMatch.employee = { $in: scopeIds };
+      deMatch.employee = { $in: scopeIds ? activeEmpIds.filter((id) => scopeIds.some((s) => String(s) === String(id))) : activeEmpIds };
+      deMatch.drug = { $in: activeDrugIds };
 
       const [saleRows, visitRows, de] = await Promise.all([
         // 1) real sales from pharmacies: boxes per month + employee + drug
@@ -372,7 +376,7 @@ export async function getOverview(req, res) {
           { $match: saleMatch },
           { $lookup: { from: MedicineTarget.collection.name, localField: "_id", foreignField: "medicineTargatableId", as: "l" } },
           { $unwind: "$l" },
-          { $match: { "l.medicineTargatableType": "EmployeeSale" } },
+          { $match: { "l.medicineTargatableType": "EmployeeSale", "l.drug": { $in: activeDrugIds } } },
           { $group: { _id: { m: monthExpr("$date"), e: "$employee", d: "$l.drug" }, boxes: { $sum: "$l.totalNoOfBoxes" } } },
         ]).allowDiskUse(true),
         // 2) completed visits + doctors seen, per month
@@ -393,17 +397,19 @@ export async function getOverview(req, res) {
         const m = months[(r._id.m || 1) - 1];
         if (!m) return;
         const drug = prices.get(String(r._id.d));
+        if (!drug) return; // not an active drug
         const boxes = r.boxes || 0;
         const amount = boxes * (drug?.price || 0);
         m.sales += amount; m.boxes += boxes;
         const div = empDiv.get(String(r._id.e)) || "—";
         m.byDivision[div] = (m.byDivision[div] || 0) + amount;
         divTotals.set(div, (divTotals.get(div) || 0) + amount);
-        const dk = drug?.name || "—";
+        const dk = drug.name;
         const dt = drugTotals.get(dk) || { name: dk, amount: 0, boxes: 0 };
         dt.amount += amount; dt.boxes += boxes; drugTotals.set(dk, dt);
         const rk = String(r._id.e);
-        repTotals.set(rk, (repTotals.get(rk) || 0) + amount);
+        const rep0 = repTotals.get(rk) || { amount: 0, boxes: 0 };
+        rep0.amount += amount; rep0.boxes += boxes; repTotals.set(rk, rep0);
       });
       visitRows.forEach((v) => { const m = months[(v._id || 1) - 1]; if (m) { m.visits += v.visits; m.doctorVisits += v.doctorVisits; } });
       de.forEach((x) => { const m = months[(x._id || 1) - 1]; if (m) { m.prescriptions += x.rx || 0; m.plannedBudget += x.budget || 0; } });
@@ -418,12 +424,16 @@ export async function getOverview(req, res) {
         year,
         months,
         divisions: [...divTotals.entries()].map(([name, amount]) => ({ name, amount: r2(amount) })).sort((a, b) => b.amount - a.amount),
-        topDrugs: [...drugTotals.values()].sort((a, b) => b.amount - a.amount).slice(0, 10).map((d) => ({ ...d, amount: r2(d.amount) })),
-        topReps: [...repTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, amount]) => ({ name: empName.get(id) || "—", amount: r2(amount) })),
+        topDrugs: [...drugTotals.values()].sort((a, b) => b.amount - a.amount || b.boxes - a.boxes).slice(0, 10).map((d) => ({ ...d, amount: r2(d.amount) })),
+        topReps: [...repTotals.entries()]
+          .filter(([id]) => empName.get(id))
+          .sort((a, b) => b[1].amount - a[1].amount || b[1].boxes - a[1].boxes)
+          .slice(0, 10)
+          .map(([id, v]) => ({ name: empName.get(id), amount: r2(v.amount), boxes: v.boxes })),
         totals: {
           sales: r2(sum("sales")), boxes: sum("boxes"), visits: sum("visits"), doctorVisits: sum("doctorVisits"),
           prescriptions: sum("prescriptions"), plannedBudget: r2(sum("plannedBudget")),
-          activeEmployees: emps.filter((e) => e.isActive !== false && (!scopeSet || scopeSet.has(String(e._id)))).length,
+          activeEmployees: emps.filter((e) => !scopeSet || scopeSet.has(String(e._id))).length,
         },
       };
     };
