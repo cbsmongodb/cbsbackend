@@ -2,8 +2,63 @@ import EmployeeSale from "../../models/EmployeeSale.js";
 import { nameSearchFilter } from "../../utils/nameSearch.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import Employee from "../../models/Employee.js";
-import { getVisibleDrugIds, seesEverything, applyEmployeeScope, canSeeEmployee } from "../../utils/groupVisibility.js";
+import { getVisibleDrugIds, seesEverything, getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import Group from "../../models/Group.js";
+import Section from "../../models/Section.js";
+import { parseMonth, monthWindow } from "../../utils/bonuses.js";
 const FORBIDDEN = { error: "ეს თანამშრომელი თქვენს დივიზიონს არ ეკუთვნის" };
+
+// Employee sales are shared inside a division: everyone in a division sees the
+// sales of every person in that division (admin, director, finance... see all).
+// null = no limit. Someone not linked to any division sees what they saw before.
+export async function divisionEmployeeIds(me) {
+  if (seesEverything(me)) return null;
+  const myGroups = [];
+  if (me.group) myGroups.push(me.group?._id || me.group);
+  const ledOrMember = await Group.find({ $or: [{ head: me._id }, { members: me._id }] }).select("_id").lean();
+  ledOrMember.forEach((g) => myGroups.push(g._id));
+
+  const secIds = new Set();
+  const secs1 = await Section.find({ $or: [{ head: me._id }, { groups: { $in: myGroups } }] }).select("_id").lean();
+  secs1.forEach((x) => secIds.add(String(x._id)));
+  const own = await Group.find({ _id: { $in: myGroups } }).select("section").lean();
+  own.forEach((g) => g.section && secIds.add(String(g.section)));
+  if (!secIds.size) return getScopeEmployeeIds(me);
+
+  const secs = await Section.find({ _id: { $in: [...secIds] } }).select("groups head").lean();
+  const groups = await Group.find({
+    $or: [{ section: { $in: [...secIds] } }, { _id: { $in: secs.flatMap((x) => x.groups || []) } }],
+  }).select("_id head members").lean();
+  const ids = new Set([String(me._id)]);
+  secs.forEach((x) => x.head && ids.add(String(x.head)));
+  groups.forEach((g) => {
+    if (g.head) ids.add(String(g.head));
+    (g.members || []).forEach((m) => ids.add(String(m)));
+  });
+  const people = await Employee.find({ group: { $in: groups.map((g) => g._id) } }).select("_id").lean();
+  people.forEach((e) => ids.add(String(e._id)));
+  return [...ids];
+}
+
+async function canSeeEmployee(me, employeeId) {
+  const scope = await divisionEmployeeIds(me);
+  if (!scope) return true;
+  const target = String(employeeId?._id || employeeId || "");
+  return scope.includes(target);
+}
+
+// GET /api/employee-sales/employees -> people of my division (for the dropdowns)
+export async function getSaleEmployees(req, res) {
+  try {
+    const scope = await divisionEmployeeIds(req.employee);
+    const filter = scope ? { _id: { $in: scope } } : {};
+    const people = await Employee.find(filter).select("firstName lastName isActive").sort({ firstName: 1 }).lean();
+    res.json(people);
+  } catch (err) {
+    console.error("getSaleEmployees failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
 import Drug from "../../models/Drug.js";
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import { recalculateForPeriod } from "../sales/doctorEntryItems.controller.js";
@@ -31,7 +86,7 @@ async function refreshCoefficients(employee, date) {
 // GET /api/employee-sales?search=&employee=&fromDate=&toDate=&page=&limit=
 export async function getAllEmployeeSales(req, res) {
   try {
-    const { search, employee, fromDate, toDate, page, limit } = req.query;
+    const { search, employee, fromDate, toDate, month, page, limit } = req.query;
 
     const filter = {};
     if (employee) filter.employee = employee;
@@ -40,6 +95,8 @@ export async function getAllEmployeeSales(req, res) {
       to.setHours(23, 59, 59, 999);
       filter.date = { $gte: new Date(fromDate), $lte: to };
     }
+    // ?month=YYYY-MM -> that whole month (Tbilisi time)
+    if (month && /^\d{4}-\d{2}$/.test(month)) filter.date = monthWindow(parseMonth(month));
 
     if (search && search.trim()) {
       const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -49,7 +106,17 @@ export async function getAllEmployeeSales(req, res) {
     }
 
     // each division sees only its own people (admin, director, finance... see all)
-    await applyEmployeeScope(req.employee, filter);
+    const scope = await divisionEmployeeIds(req.employee);
+    if (scope) {
+      const allowed = new Set(scope);
+      if (filter.employee && typeof filter.employee !== "object") {
+        if (!allowed.has(String(filter.employee))) filter.employee = { $in: [] };
+      } else if (filter.employee?.$in) {
+        filter.employee = { $in: filter.employee.$in.filter((id) => allowed.has(String(id))) };
+      } else {
+        filter.employee = { $in: scope };
+      }
+    }
 
     const pageNum = Math.max(parseInt(page) || 1, 1);
     const limitNum = Math.min(Math.max(parseInt(limit) || 100, 1), 500);
