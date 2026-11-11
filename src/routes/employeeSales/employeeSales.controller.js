@@ -138,8 +138,10 @@ export async function getAllEmployeeSales(req, res) {
     }).populate("drug", "price").lean();
 
     const amountBySale = new Map();
+    const boxesBySale = new Map();
     sales.forEach((s) => {
       const key = String(s.medicineTargatableId);
+      boxesBySale.set(key, (boxesBySale.get(key) || 0) + (s.totalNoOfBoxes || 0));
       const amount = (s.totalNoOfBoxes || 0) * (s.drug?.price || 0);
       amountBySale.set(key, (amountBySale.get(key) || 0) + amount);
     });
@@ -149,6 +151,7 @@ export async function getAllEmployeeSales(req, res) {
       date: d.date,
       employeeName: d.employee?.name || "—",
       saleAmount: Math.round((amountBySale.get(String(d._id)) || 0) * 100) / 100,
+      saleBoxes: boxesBySale.get(String(d._id)) || 0,
     }));
 
     res.json({
