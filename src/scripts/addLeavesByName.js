@@ -50,9 +50,12 @@ const restKeys = new Set(restRows.map((r) => dayKey(r.date)));
 let added = 0;
 let problems = 0;
 for (const l of leaves) {
-  const last = new RegExp(l.last, "i");
-  let found = await Employee.find({ lastName: last, isActive: { $ne: false } })
-    .select("firstName lastName email").lean();
+  // optional "email" in the entry finds the person by e-mail instead of surname
+  let found = l.email
+    ? await Employee.find({ email: String(l.email).toLowerCase(), isActive: { $ne: false } })
+        .select("firstName lastName email").lean()
+    : await Employee.find({ lastName: new RegExp(l.last, "i"), isActive: { $ne: false } })
+        .select("firstName lastName email").lean();
   if (found.length > 1 && l.first) {
     const f = new RegExp(`^(${l.first})`, "i");
     const narrowed = found.filter((e) => f.test(e.firstName || ""));

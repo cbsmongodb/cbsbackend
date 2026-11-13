@@ -13,6 +13,9 @@ const FORBIDDEN = { error: "ეს თანამშრომელი თქ�
 // null = no limit. Someone not linked to any division sees what they saw before.
 export async function divisionEmployeeIds(me) {
   if (seesEverything(me)) return null;
+  // a Group Manager sees only their OWN group, not the whole division
+  const roleName = (me?.role?.name || "").toLowerCase().trim();
+  if (roleName === "group manager" || roleName.startsWith("group manager ")) return getScopeEmployeeIds(me);
   const myGroups = [];
   if (me.group) myGroups.push(me.group?._id || me.group);
   const ledOrMember = await Group.find({ $or: [{ head: me._id }, { members: me._id }] }).select("_id").lean();

@@ -1,0 +1,45 @@
+{
+ "createdByEmail": "lbogveradze12@gmail.com",
+ "leaves": [
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rusudan",
+   "type": "paid",
+   "from": "2026-03-20",
+   "to": "2026-03-20"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rusudan",
+   "type": "paid",
+   "from": "2026-03-23",
+   "to": "2026-03-25"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rusudan",
+   "type": "sick",
+   "from": "2026-02-04",
+   "to": "2026-02-06"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rusudan",
+   "type": "paid",
+   "from": "2026-08-06",
+   "to": "2026-08-31"
+  },
+  {
+   "ka": "რუსუდან თიგიშვილი",
+   "last": "^\\s*(Tigishvili)\\s*$",
+   "first": "Rusudan",
+   "type": "paid",
+   "from": "2026-09-21",
+   "to": "2026-09-21"
+  }
+ ]
+}
