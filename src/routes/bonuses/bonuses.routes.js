@@ -45,7 +45,7 @@ router.get("/", async (req, res) => {
     if (allowed) drugFilter._id = { $in: [...allowed] };
     const [drugs, monthly, overrides] = await Promise.all([
       Drug.find(drugFilter).select("name price bonus").sort({ name: 1 }).lean(),
-      DrugBonus.find({ period: monthWindow(month) }).select("drug value").lean(),
+      DrugBonus.find({ period: monthWindow(month) }).select("drug value regionValue").lean(),
       DoctorDrugBonus.find({ period: monthWindow(month) })
         .select("doctor drug value")
         .populate({ path: "doctor", select: "firstName lastName uniqueNumber profile", populate: { path: "profile", select: "name" } })
@@ -68,7 +68,8 @@ router.get("/", async (req, res) => {
           _id: d._id,
           name: d.name,
           price: d.price || 0,
-          value: own ? own.value : null, // set for this month
+          value: own ? own.value : null, // set for this month (Tbilisi)
+          regionValue: own && own.regionValue != null ? own.regionValue : null, // null = same as Tbilisi
           inherited, // used when value is empty
           inheritedFrom: d.bonus > 0 ? "drug" : hasDefault(month) ? "default" : "none",
           doctors: (byDrug.get(String(d._id)) || [])
@@ -150,22 +151,36 @@ router.put("/batch", async (req, res) => {
     const drugs = Array.isArray(req.body.drugs) ? req.body.drugs : [];
     const doctors = Array.isArray(req.body.doctors) ? req.body.doctors : [];
     const bad = [];
-    const drugRows = drugs.map((d) => ({ drug: d.drug, value: num(d.value) }));
+    // a field that is not sent stays as it is (old pages send only "value")
+    const drugRows = drugs.map((d) => ({
+      drug: d.drug,
+      hasValue: "value" in d, value: num(d.value),
+      hasRegion: "regionValue" in d, regionValue: num(d.regionValue),
+    }));
     const docRows = doctors.map((d) => ({ drug: d.drug, doctor: d.doctor, value: num(d.value) }));
-    drugRows.forEach((r) => { if (!isId(r.drug) || Number.isNaN(r.value)) bad.push(r.drug); });
+    drugRows.forEach((r) => { if (!isId(r.drug) || Number.isNaN(r.value) || Number.isNaN(r.regionValue)) bad.push(r.drug); });
     docRows.forEach((r) => { if (!isId(r.drug) || !isId(r.doctor) || Number.isNaN(r.value)) bad.push(`${r.drug}|${r.doctor}`); });
     if (bad.length) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი", bad });
     if (notMine(await allowedDrugIds(req), [...drugRows, ...docRows].map((r) => r.drug))) return res.status(403).json(FORBIDDEN);
     if (!drugRows.length && !docRows.length) return res.json({ ok: true, saved: 0, recalculated: 0 });
 
     for (const r of drugRows) {
-      if (r.value === null) {
+      const cur = await DrugBonus.findOne({ drug: r.drug, period: monthWindow(month) }).select("value regionValue").lean();
+      const value = r.hasValue ? r.value : cur ? cur.value : null;
+      const regionValue = r.hasRegion ? r.regionValue : cur?.regionValue ?? null;
+      if (value === null && regionValue === null) {
         await DrugBonus.deleteMany({ drug: r.drug, period: monthWindow(month) });
       } else {
+        // only the region one is set -> Tbilisi keeps the bonus it inherits
+        let tbilisi = value;
+        if (tbilisi === null) {
+          const d = await Drug.findById(r.drug).select("bonus").lean();
+          tbilisi = d?.bonus > 0 ? d.bonus : hasDefault(month) ? DEFAULT_BONUS : 0;
+        }
         await DrugBonus.deleteMany({ drug: r.drug, period: monthWindow(month), $nor: [{ period: monthStart(month) }] });
         await DrugBonus.findOneAndUpdate(
           { drug: r.drug, period: monthStart(month) },
-          { $set: { value: r.value, setBy: req.employee?._id } },
+          { $set: { value: tbilisi, regionValue, setBy: req.employee?._id } },
           { upsert: true, setDefaultsOnInsert: true }
         );
       }
@@ -200,7 +215,7 @@ router.post("/copy", async (req, res) => {
     const allowed = await allowedDrugIds(req);
     const only = allowed ? { drug: { $in: [...allowed] } } : {};
     const [srcDrug, dstDrug, srcDoc, dstDoc] = await Promise.all([
-      DrugBonus.find({ ...only, period: monthWindow(from) }).select("drug value").lean(),
+      DrugBonus.find({ ...only, period: monthWindow(from) }).select("drug value regionValue").lean(),
       DrugBonus.find({ ...only, period: monthWindow(to) }).select("drug").lean(),
       DoctorDrugBonus.find({ ...only, period: monthWindow(from) }).select("drug doctor value").lean(),
       DoctorDrugBonus.find({ ...only, period: monthWindow(to) }).select("drug doctor").lean(),
@@ -210,7 +225,7 @@ router.post("/copy", async (req, res) => {
     const newDrug = srcDrug.filter((b) => !haveDrug.has(String(b.drug)));
     const newDoc = srcDoc.filter((b) => !haveDoc.has(`${b.doctor}|${b.drug}`));
     if (newDrug.length) {
-      await DrugBonus.insertMany(newDrug.map((b) => ({ drug: b.drug, period: monthStart(to), value: b.value, setBy: req.employee?._id })), { ordered: false });
+      await DrugBonus.insertMany(newDrug.map((b) => ({ drug: b.drug, period: monthStart(to), value: b.value, regionValue: b.regionValue ?? null, setBy: req.employee?._id })), { ordered: false });
     }
     if (newDoc.length) {
       await DoctorDrugBonus.insertMany(newDoc.map((b) => ({ drug: b.drug, doctor: b.doctor, period: monthStart(to), value: b.value, setBy: req.employee?._id })), { ordered: false });

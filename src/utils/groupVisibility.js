@@ -35,12 +35,15 @@ async function computeVisibleGroups(requester) {
   if (SELF_ONLY_ROLES.has((requester?.role?.name || "").toLowerCase().trim())) return [];
   // 1) Section head -> every group of that section (both link directions,
   //    in case Section.groups[] or Group.section is missing on one side)
-  const section = await Section.findOne({ head: requester._id }).populate("groups").lean();
-  if (section) {
+  // (ყველა დივიზიონი, რომლის head-იც არის: ერთზე მეტიც შეიძლება ჰქონდეს)
+  const headedSections = await Section.find({ head: requester._id }).populate("groups").lean();
+  if (headedSections.length) {
     const byId = new Map();
-    (section.groups || []).forEach((g) => byId.set(String(g._id), g));
-    const linked = await Group.find({ section: section._id }).lean();
-    linked.forEach((g) => byId.set(String(g._id), g));
+    for (const section of headedSections) {
+      (section.groups || []).forEach((g) => byId.set(String(g._id), g));
+      const linked = await Group.find({ section: section._id }).lean();
+      linked.forEach((g) => byId.set(String(g._id), g));
+    }
     if (byId.size > 0) return Array.from(byId.values());
   }
 

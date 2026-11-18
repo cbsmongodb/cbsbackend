@@ -13,6 +13,7 @@ import DrugBonus from "../models/DrugBonus.js";
 import DoctorDrugBonus from "../models/DoctorDrugBonus.js";
 import Drug from "../models/Drug.js";
 import DoctorEntryItem from "../models/DoctorEntryItem.js";
+import Employee from "../models/Employee.js";
 import { recalculateForPeriod } from "../routes/sales/doctorEntryItems.controller.js";
 
 export const DEFAULT_BONUS = 1;
@@ -37,15 +38,26 @@ export const hasDefault = ({ y, m }) => y * 12 + m >= DEFAULT_FROM.y * 12 + DEFA
 
 // drug-level bonus of a month: Map(drugId -> { value, source })
 //   source: "month" (set for this month) | "drug" (old general bonus) | "default"
-export async function drugBonuses(month, drugIds) {
+// "tbilisi" | "region" of one employee (missing / unknown = tbilisi)
+export async function employeeArea(employeeId) {
+  if (!employeeId) return "tbilisi";
+  const e = await Employee.findById(employeeId).select("area").lean();
+  return e?.area === "region" ? "region" : "tbilisi";
+}
+
+// area "region" -> the month's regionValue when it is set, otherwise the Tbilisi value
+export async function drugBonuses(month, drugIds, area = "tbilisi") {
   const ids = [...new Set(drugIds.map(String))];
   const out = new Map();
   if (!ids.length) return out;
   const [monthly, drugs] = await Promise.all([
-    DrugBonus.find({ drug: { $in: ids }, period: monthWindow(month) }).select("drug value").lean(),
+    DrugBonus.find({ drug: { $in: ids }, period: monthWindow(month) }).select("drug value regionValue").lean(),
     Drug.find({ _id: { $in: ids } }).select("bonus").lean(),
   ]);
-  monthly.forEach((b) => out.set(String(b.drug), { value: b.value, source: "month" }));
+  monthly.forEach((b) => out.set(String(b.drug), {
+    value: area === "region" && b.regionValue != null ? b.regionValue : b.value,
+    source: "month",
+  }));
   drugs.forEach((d) => {
     const k = String(d._id);
     if (out.has(k)) return;
@@ -62,11 +74,11 @@ export async function doctorBonuses(month, filter = {}) {
 }
 
 // final bonus for doctor + drug pairs: Map("doctorId|drugId" -> value). Pairs with no bonus at all are left out.
-export async function resolveBonuses(month, pairs) {
+export async function resolveBonuses(month, pairs, { area = "tbilisi" } = {}) {
   const out = new Map();
   if (!pairs.length) return out;
   const [byDrug, byDoctor] = await Promise.all([
-    drugBonuses(month, pairs.map((p) => p.drug)),
+    drugBonuses(month, pairs.map((p) => p.drug), area),
     doctorBonuses(month, { drug: { $in: [...new Set(pairs.map((p) => String(p.drug)))] }, doctor: { $in: [...new Set(pairs.map((p) => String(p.doctor)))] } }),
   ]);
   for (const p of pairs) {
@@ -80,17 +92,28 @@ export async function resolveBonuses(month, pairs) {
 // write the current bonus onto a month's prescription lines (optionally only one
 // drug / one doctor) and recalculate the employees whose numbers changed.
 // dryRun -> only counts. Returns { lines, changed, employees }.
-export async function restampBonuses(month, { drug, drugs, doctor, dryRun = false } = {}) {
+export async function restampBonuses(month, { drug, drugs, doctor, employees: onlyEmployees, dryRun = false } = {}) {
   const filter = { period: monthWindow(month) };
   if (drug) filter.drug = drug;
   if (drugs?.length) filter.drug = { $in: drugs };
   if (doctor) filter.doctor = doctor;
+  if (onlyEmployees?.length) filter.employee = { $in: onlyEmployees };
   const items = await DoctorEntryItem.find(filter).select("employee doctor drug period budget").lean();
-  const resolved = await resolveBonuses(month, items.map((i) => ({ doctor: i.doctor, drug: i.drug })));
+  // region reps get the region bonus -> resolve the two groups separately
+  const empIds = [...new Set(items.map((i) => String(i.employee)))];
+  const regionEmps = new Set(
+    (await Employee.find({ _id: { $in: empIds }, area: "region" }).select("_id").lean()).map((e) => String(e._id))
+  );
+  const isRegion = (i) => regionEmps.has(String(i.employee));
+  const pairs = (list) => list.map((i) => ({ doctor: i.doctor, drug: i.drug }));
+  const [resT, resR] = await Promise.all([
+    resolveBonuses(month, pairs(items.filter((i) => !isRegion(i)))),
+    resolveBonuses(month, pairs(items.filter(isRegion)), { area: "region" }),
+  ]);
 
   const changes = [];
   for (const it of items) {
-    const v = resolved.get(`${it.doctor}|${it.drug}`);
+    const v = (isRegion(it) ? resR : resT).get(`${it.doctor}|${it.drug}`);
     if (v === undefined || v === (it.budget || 0)) continue;
     changes.push({ it, v });
   }

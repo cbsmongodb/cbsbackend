@@ -7,7 +7,9 @@ const drugBonusSchema = new mongoose.Schema(
     drug: { type: mongoose.Schema.Types.ObjectId, ref: "Drug", required: true },
     // თვის პირველი დღე ინახება ნორმალიზებულად: 2026-08-01
     period: { type: Date, required: true },
-    value: { type: Number, required: true, default: 0 },
+    value: { type: Number, required: true, default: 0 }, // Tbilisi
+    // region reps' bonus; null = the same as Tbilisi (value)
+    regionValue: { type: Number, default: null, min: 0 },
     setBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
   },
   { timestamps: true }

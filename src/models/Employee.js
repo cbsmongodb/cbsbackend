@@ -23,6 +23,9 @@ const employeeSchema = new mongoose.Schema(
 
     group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", default: null },
 
+    // which bonus the rep gets: Tbilisi or region (Bonuses page). Missing = Tbilisi.
+    area: { type: String, enum: ["tbilisi", "region"], default: "tbilisi" },
+
     isActive: { type: Boolean, default: false },
   },
   { timestamps: true }

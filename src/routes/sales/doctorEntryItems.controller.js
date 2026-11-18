@@ -9,7 +9,7 @@ import DrugBonus from "../../models/DrugBonus.js";
 import Drug from "../../models/Drug.js";
 import { budgetSumsByDoctor } from "../../utils/budgetSync.js";
 import { getScopeEmployeeIds, canSeeEmployee } from "../../utils/groupVisibility.js";
-import { drugBonuses, doctorBonuses, resolveBonuses, parseMonth } from "../../utils/bonuses.js";
+import { drugBonuses, doctorBonuses, resolveBonuses, parseMonth, employeeArea } from "../../utils/bonuses.js";
 
 function normalizeToMonthStart(dateLike) {
   let value = dateLike;
@@ -64,9 +64,9 @@ async function pharmacySalesByDrug(employeeId, period) {
 
 // bonus per box for a month: the drug's monthly bonus (Drugs page "Bonuses by month"),
 // otherwise the drug's general bonus -> Map(drugId -> value). Drugs with neither are left out.
-async function bonusesForPeriod(drugIds, period) {
+async function bonusesForPeriod(drugIds, period, area = "tbilisi") {
   // Bonuses page: month bonus -> old general bonus -> default 1 (utils/bonuses.js)
-  const byDrug = await drugBonuses(parseMonth(period), drugIds);
+  const byDrug = await drugBonuses(parseMonth(period), drugIds, area);
   return new Map([...byDrug].map(([id, b]) => [id, b.value]));
 }
 
@@ -196,7 +196,7 @@ export async function getListing(req, res) {
       items,
       drugTotals: [...summaryByDrug.values()],
       pharmacySales: Object.fromEntries(pharmacy),
-      bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id").lean()).map((d) => d._id), periodDate)),
+      bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id").lean()).map((d) => d._id), periodDate, await employeeArea(employee))),
       doctorBonuses: Object.fromEntries(await doctorBonuses(parseMonth(periodDate))),
     });
   } catch (err) {
@@ -272,7 +272,8 @@ export async function submitEntries(req, res) {
     };
     const bonus = await resolveBonuses(
       parseMonth(periodDate),
-      doctorEntries.flatMap((e) => (e.drugs || []).filter((d) => d.drugId).map((d) => ({ doctor: e.doctorId, drug: d.drugId })))
+      doctorEntries.flatMap((e) => (e.drugs || []).filter((d) => d.drugId).map((d) => ({ doctor: e.doctorId, drug: d.drugId }))),
+      { area: await employeeArea(employee) }
     );
 
     // one write per doctor+drug (last one wins, like before) and ONE summary
