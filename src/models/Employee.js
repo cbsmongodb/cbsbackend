@@ -54,6 +54,45 @@ employeeSchema.post("findOne", addLeanVirtuals);
 // speeds up the most common filters (reports, dashboards, scope lookups)
 employeeSchema.index({ group: 1 });
 
+// ---- bonus area (Tbilisi / region) ----
+// anything but "region" is Tbilisi (an empty form field too)
+const normArea = (v) => (v === "region" ? "region" : "tbilisi");
+
+// a rep moved between Tbilisi and region -> their bonuses are recalculated (from October 2026 on)
+async function restampArea(employeeId) {
+  try {
+    const { restampBonuses, DEFAULT_FROM } = await import("../utils/bonuses.js");
+    const now = new Date();
+    for (let t = DEFAULT_FROM.y * 12 + DEFAULT_FROM.m; t <= now.getFullYear() * 12 + now.getMonth(); t++) {
+      await restampBonuses({ y: Math.floor(t / 12), m: t % 12 }, { employees: [employeeId] });
+    }
+  } catch (err) {
+    console.error("area restamp failed:", err);
+  }
+}
+
+employeeSchema.pre("validate", function () {
+  this.area = normArea(this.area);
+});
+employeeSchema.pre("save", function () {
+  this.$locals.areaChanged = !this.isNew && this.isModified("area");
+});
+employeeSchema.post("save", function (doc) {
+  if (doc.$locals?.areaChanged) restampArea(doc._id);
+});
+employeeSchema.pre("findOneAndUpdate", async function () {
+  const u = this.getUpdate() || {};
+  const inSet = u.$set && "area" in u.$set;
+  if (!inSet && !("area" in u)) return;
+  const next = normArea(inSet ? u.$set.area : u.area);
+  if (inSet) u.$set.area = next; else u.area = next;
+  const old = await this.model.findOne(this.getQuery()).select("area").lean();
+  if (old && normArea(old.area) !== next) this._areaChangedId = old._id;
+});
+employeeSchema.post("findOneAndUpdate", function () {
+  if (this._areaChangedId) restampArea(this._areaChangedId);
+});
+
 invalidateCachesOnWrite(employeeSchema);
 
 export default mongoose.model("Employee", employeeSchema);
