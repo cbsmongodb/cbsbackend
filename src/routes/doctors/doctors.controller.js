@@ -90,6 +90,7 @@ export async function createDoctor(req, res) {
       const messages = Object.values(err.errors).map((e) => e.message);
       return res.status(400).json({ error: messages.join(", ") });
     }
+    if (err?.code === 11000) return res.status(409).json(await dupDoctorError(err));
     console.error("createDoctor failed:", err);
     res.status(500).json({ error: "Server error" });
   }
@@ -107,6 +108,7 @@ export async function updateDoctor(req, res) {
     if (!doctor) return res.status(404).json({ error: "Doctor not found" });
     res.json(doctor);
   } catch (err) {
+    if (err?.code === 11000) return res.status(409).json(await dupDoctorError(err));
     console.error("updateDoctor failed:", err);
     res.status(500).json({ error: "Server error" });
   }
@@ -121,4 +123,12 @@ export async function deleteDoctor(req, res) {
     console.error("deleteDoctor failed:", err);
     res.status(500).json({ error: "Server error" });
   }
+}
+
+// duplicate personal number -> a clear message instead of "Server error"
+async function dupDoctorError(err) {
+  const num = err?.keyValue?.uniqueNumber
+    || (String(err?.message || '').match(/uniqueNumber: "([^"]+)"/) || [])[1] || ''
+  const other = num ? await Doctor.findOne({ uniqueNumber: num }).select("firstName lastName").lean() : null
+  return { error: `ამ პირადი ნომრით (${num}) ექიმი უკვე არსებობს${other ? `: ${other.firstName} ${other.lastName}` : ''}` }
 }
