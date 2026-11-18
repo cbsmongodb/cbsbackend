@@ -52,9 +52,15 @@ async function mayChange(me, ownerId, action) {
   return can(me, action) && (await canSeeEmployee(me, ownerId));
 }
 
+// rebuild the month's per-drug totals from the lines that are left
+// (it used to only drop drugs with no lines, so deleting/editing left a too-big total)
 async function cleanupSummary(employee, period) {
-  const remaining = await DoctorEntryItem.find({ employee, period }).distinct("drug");
-  await DoctorEntrySummary.deleteMany({ employee, period, drug: { $nin: remaining } });
+  const items = await DoctorEntryItem.find({ employee, period }).select("drug prescription").lean();
+  const by = new Map();
+  items.forEach((i) => by.set(String(i.drug), (by.get(String(i.drug)) || 0) + (i.prescription || 0)));
+  await DoctorEntrySummary.deleteMany({ employee, period, drug: { $nin: [...by.keys()] } });
+  await Promise.all([...by].map(([drug, prescription]) =>
+    DoctorEntrySummary.updateOne({ employee, period, drug }, { $set: { prescription } }, { upsert: true })));
 }
 
 router.get("/", async (req, res) => {
@@ -182,6 +188,7 @@ router.put("/:id", async (req, res) => {
       item[f] = n;
     }
     await item.save();
+    await cleanupSummary(item.employee, item.period);
     await recalculateForPeriod(item.employee, item.period);
     res.json({ _id: item._id, quota: item.quota, prescription: item.prescription });
   } catch (err) {
