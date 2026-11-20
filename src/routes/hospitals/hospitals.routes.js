@@ -8,6 +8,7 @@ import Address from "../../models/Address.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { geocodeAddress, searchAddress } from "../../utils/geocode.js";
+import { findRepLocationFixes, applyRepLocations, undoRepLocations } from "../../utils/repLocations.js";
 
 export default function hospitalsRoutes(io) {
   const router = express.Router();
@@ -104,6 +105,39 @@ export default function hospitalsRoutes(io) {
       res.json(result);
     } catch (err) {
       console.error("missing-coordinates failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  // locations the reps' GPS can fix: hospitals with no location + hospitals whose pin is off
+  router.get("/rep-location-fixes", async (req, res) => {
+    try {
+      const minDistance = Math.max(50, Number(req.query.minDistance) || 300);
+      res.json(await findRepLocationFixes({ minDistance }));
+    } catch (err) {
+      console.error("rep-location-fixes failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.post("/apply-rep-locations", async (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "ids must be a non-empty array" });
+      res.json(await applyRepLocations(ids));
+    } catch (err) {
+      console.error("apply-rep-locations failed:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+
+  router.post("/undo-rep-locations", async (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: "ids must be a non-empty array" });
+      res.json(await undoRepLocations(ids));
+    } catch (err) {
+      console.error("undo-rep-locations failed:", err);
       res.status(500).json({ error: "Server error" });
     }
   });

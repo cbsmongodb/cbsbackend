@@ -12,6 +12,10 @@ const hospitalSchema = new mongoose.Schema(
     lat: Number,
     lng: Number,
     isActive: { type: Boolean, default: false },
+    // set when the location was fixed from the reps' GPS (keeps the old point for undo)
+    locationSource: String,
+    locationFixedAt: Date,
+    prevLocation: { lat: Number, lng: Number },
   },
   { timestamps: true }
 );
