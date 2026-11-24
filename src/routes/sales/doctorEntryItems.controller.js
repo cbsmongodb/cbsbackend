@@ -566,7 +566,11 @@ export async function getListingFilters(req, res) {
       .filter((g) => byGroup.has(String(g._id)))
       .map((g) => ({ id: String(g._id), name: g.name, section: g.section ? String(g.section) : sectionOf.get(String(g._id)) || null, employees: [...byGroup.get(String(g._id))] }));
     const used = new Set(outGroups.map((g) => g.section).filter(Boolean));
+    // drugs: the active ones + any drug that already has entries
+    const entered = await DoctorEntryItem.distinct("drug", allowed ? { employee: { $in: [...allowed].map((id) => new mongoose.Types.ObjectId(id)) } } : {});
+    const drugs = await Drug.find({ $or: [{ isActive: { $ne: false } }, { _id: { $in: entered } }] }).select("name").sort({ name: 1 }).lean();
     res.json({
+      drugs: drugs.map((d) => ({ _id: String(d._id), name: d.name })),
       sections: sections.filter((s) => used.has(String(s._id))).map((s) => ({ id: String(s._id), name: s.name, head: s.head ? String(s.head) : null })),
       groups: outGroups,
     });
@@ -596,6 +600,9 @@ export async function getListingPage(req, res) {
       const scope = await filterScope(req); // role scope ∩ division / group
       if (scope) filter.employee = { $in: scope };
     }
+
+    // one drug
+    if (oid(req.query.drug)) filter.drug = new mongoose.Types.ObjectId(String(req.query.drug));
 
     // search: doctor (name / ID), drug or rep
     const q = String(req.query.q || "").trim();
@@ -632,6 +639,18 @@ export async function getListingPage(req, res) {
         .lean(),
     ]);
 
+    // a drug is chosen -> who entered how much of it
+    let byEmployee = null;
+    if (filter.drug) {
+      byEmployee = await DoctorEntryItem.aggregate([
+        { $match: filter },
+        { $group: { _id: "$employee", rows: { $sum: 1 }, doctors: { $addToSet: "$doctor" }, quota: { $sum: "$quota" }, prescription: { $sum: "$prescription" }, totalBudget: { $sum: "$totalBudget" }, issuedBudget: { $sum: "$issuedBudget" } } },
+        { $lookup: { from: Employee.collection.name, localField: "_id", foreignField: "_id", as: "e" } },
+        { $project: { _id: 0, employee: "$_id", name: { $trim: { input: { $concat: [{ $ifNull: [{ $first: "$e.firstName" }, ""] }, " ", { $ifNull: [{ $first: "$e.lastName" }, ""] }] } } }, rows: 1, doctors: { $size: "$doctors" }, quota: 1, prescription: 1, totalBudget: 1, issuedBudget: 1 } },
+        { $sort: { prescription: -1, totalBudget: -1 } },
+      ]);
+    }
+
     // pharmacy sales only for the reps on this page -> { "<employee>:<drug>": boxes }
     const pharmacySales = {};
     const reps = [...new Set(items.map((i) => String(i.employee?._id || i.employee)))];
@@ -640,7 +659,7 @@ export async function getListingPage(req, res) {
       m.forEach((v, drug) => { pharmacySales[`${emp}:${drug}`] = v; });
     }));
 
-    res.json({ items, count, page: pageNum, limit, totals: sums[0] || {}, pharmacySales });
+    res.json({ items, count, page: pageNum, limit, totals: sums[0] || {}, pharmacySales, byEmployee });
   } catch (err) {
     console.error("getListingPage failed:", err);
     res.status(500).json({ error: "Server error" });
