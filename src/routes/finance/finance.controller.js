@@ -4,7 +4,10 @@ import MedicineTarget from "../../models/MedicineTarget.js";
 import Budget from "../../models/Budget.js";
 import Drug from "../../models/Drug.js";
 import "../../models/Doctor.js";
-import "../../models/Employee.js";
+import mongoose from "mongoose";
+import Employee from "../../models/Employee.js";
+import Group from "../../models/Group.js";
+import Section from "../../models/Section.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 const FINANCE_ROLES = new Set(["finance manager", "admin", "director", "accountant's assistant", "office"]);
@@ -31,6 +34,66 @@ async function pharmacySalesAmount(y, m, scope, prices) {
   return { amount: r2(amount), boxes: r2(boxes) };
 }
 
+// ---- filters: ?section=<division id>&group=<group id> ----
+// -> the employee ids of that division / group (inside what the role may see); null = everyone
+async function filterScope(req) {
+  const base = await getScopeEmployeeIds(req.employee);
+  const { section, group } = req.query;
+  const ok = (v) => v && mongoose.isValidObjectId(String(v));
+  if (!ok(section) && !ok(group)) return base;
+  let groupIds = [];
+  if (ok(group)) groupIds = [String(group)];
+  else {
+    const sec = await Section.findById(section).select("groups head").lean();
+    const linked = await Group.find({ section }).select("_id").lean();
+    groupIds = [...new Set([...(sec?.groups || []).map(String), ...linked.map((g) => String(g._id))])];
+  }
+  const ids = new Set();
+  const groups = await Group.find({ _id: { $in: groupIds } }).select("head members").lean();
+  groups.forEach((g) => { if (g.head) ids.add(String(g.head)); (g.members || []).forEach((m) => ids.add(String(m))); });
+  (await Employee.find({ group: { $in: groupIds } }).select("_id").lean()).forEach((e) => ids.add(String(e._id)));
+  if (!ok(group)) {
+    const sec = await Section.findById(section).select("head").lean();
+    if (sec?.head) ids.add(String(sec.head));
+  }
+  let list = [...ids];
+  if (base) { const allowed = new Set(base.map(String)); list = list.filter((id) => allowed.has(id)); }
+  return list.map((id) => new mongoose.Types.ObjectId(id));
+}
+
+// rows for the details table: search (?q=) + pages (?offset=&limit=, max 1000)
+function page(req, rows) {
+  const q = String(req.query.q || "").trim().toLowerCase();
+  const list = q ? rows.filter((r) => Object.values(r).some((v) => String(v).toLowerCase().includes(q))) : rows;
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 500));
+  return { rows: list.slice(offset, offset + limit), count: list.length, offset };
+}
+
+// GET /api/finance/filters — divisions and groups for the filter bar
+export async function getFinanceFilters(req, res) {
+  try {
+    if (!FINANCE_ROLES.has((req.employee?.role?.name || "").toLowerCase().trim())) {
+      return res.status(403).json({ error: "Not allowed" });
+    }
+    const [sections, groups] = await Promise.all([
+      Section.find().select("name groups").sort({ name: 1 }).lean(),
+      Group.find().select("name section").sort({ name: 1 }).lean(),
+    ]);
+    const sectionOf = new Map();
+    sections.forEach((x) => (x.groups || []).forEach((g) => sectionOf.set(String(g), String(x._id))));
+    const out = groups.map((g) => ({ id: String(g._id), name: g.name, section: g.section ? String(g.section) : sectionOf.get(String(g._id)) || null }));
+    const used = new Set(out.map((g) => g.section).filter(Boolean));
+    res.json({
+      sections: sections.filter((x) => used.has(String(x._id))).map((x) => ({ id: String(x._id), name: x.name })),
+      groups: out,
+    });
+  } catch (err) {
+    console.error("getFinanceFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 // GET /api/finance/summary?month=YYYY-MM
 export async function getFinanceSummary(req, res) {
   try {
@@ -41,7 +104,7 @@ export async function getFinanceSummary(req, res) {
     const [y, m] = /^\d{4}-\d{2}$/.test(String(req.query.month || ""))
       ? req.query.month.split("-").map(Number)
       : [now.getUTCFullYear(), now.getUTCMonth() + 1];
-    const scope = await getScopeEmployeeIds(req.employee);
+    const scope = await filterScope(req);
     const prices = new Map((await Drug.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
 
     // doctors' budgets for the month (Data Entry): planned = sum of the drugs' totals, issued = what was paid
@@ -132,7 +195,7 @@ export async function getFinanceDetails(req, res) {
     const [y, m] = /^\d{4}-\d{2}$/.test(String(req.query.month || ""))
       ? req.query.month.split("-").map(Number)
       : [now.getUTCFullYear(), now.getUTCMonth() + 1];
-    const scope = await getScopeEmployeeIds(req.employee);
+    const scope = await filterScope(req);
     const drugs = await Drug.find({}).select("name price").lean();
     const drugById = new Map(drugs.map((d) => [String(d._id), d]));
     const checks = [];
@@ -169,7 +232,7 @@ export async function getFinanceDetails(req, res) {
         source: "Employee Sales გვერდზე ატვირთული აფთიაქების გაყიდვები ამ თვისთვის (ყველა თანამშრომელი).",
         formula: "თანხა = Σ (გაყიდული კოლოფი × წამლის ფასი Drugs გვერდიდან)",
         columns: [["drug", "წამალი"], ["boxes", "კოლოფი", "num"], ["price", "ფასი", "money"], ["amount", "თანხა", "money"]],
-        rows,
+        ...page(req, rows),
         total: r2(rows.reduce((s, r) => s + r.amount, 0)),
         meta: `${sales.length} გაყიდვის ჩანაწერი · ${lines.length} ხაზი`,
         checks,
@@ -206,13 +269,13 @@ export async function getFinanceDetails(req, res) {
       if (noSale) checks.push({ level: "warn", text: `${noSale} ექიმთან კოეფიციენტი 0-ია — გაყიდვები (აფთიაქიდან ან რეცეპტებში) ჯერ არ არის შეყვანილი, ამიტომ დაგეგმილი ბიუჯეტი 0-ს აჩვენებს.` });
       if (noRate) checks.push({ level: "warn", text: `${noRate} ექიმთან ზოგ წამალს ბიუჯეტის განაკვეთი (ბონუსი კოლოფზე) არ აქვს — Bonuses გვერდზე შეამოწმე.` });
       if (zero) checks.push({ level: "info", text: `ბარათზე „${all.length} ექიმი“ ითვლის ყველა ექიმს, ვისზეც ამ თვეში რეცეპტი შეიყვანეს; მათგან ${zero}-ს დაგეგმილი 0-ია.` });
-      const rows = all.sort((a, b) => b.planned - a.planned);
+      const rows = all.sort((a, b) => b.planned - a.planned).map((p) => ({ doctor: p.doctor, employee: p.employee, lines: p.lines, planned: p.planned }));
       return res.json({
         card,
         source: "„რეცეპტების შეყვანა“ გვერდი, ამ თვის ხაზები (ექიმი + თანამშრომელი).",
         formula: "დაგეგმილი = Σ (დანიშნული კოლოფი × ბიუჯეტი კოლოფზე × კოეფიციენტი);  კოეფიციენტი = გაყიდული ÷ დანიშნული",
         columns: [["doctor", "ექიმი"], ["employee", "წარმომადგენელი"], ["lines", "წამალი", "num"], ["planned", "დაგეგმილი", "money"]],
-        rows,
+        ...page(req, rows),
         total: r2(rows.reduce((s, r) => s + r.planned, 0)),
         meta: `${rows.length} ექიმი · ${items.length} ხაზი`,
         checks,
@@ -248,7 +311,7 @@ export async function getFinanceDetails(req, res) {
         source: "„რეცეპტების შეყვანის“ ველი „გაცემული ბიუჯეტი“ — ავტომატურად ივსება ბიუჯეტების გვერდიდან (ან ხელით).",
         formula: "გაცემული = Σ ექიმების „გაცემული ბიუჯეტი“",
         columns: [["doctor", "ექიმი"], ["employee", "წარმომადგენელი"], ["issued", "გაცემული", "money"], ["fromBudgets", "ბიუჯეტებში", "money"], ["diff", "სხვაობა", "money"], ["source", "წყარო"], ["bank", "ბანკი"]],
-        rows,
+        ...page(req, rows),
         total: r2(rows.reduce((s, r) => s + r.issued, 0)),
         meta: `${rows.length} ექიმი`,
         checks,
@@ -265,7 +328,7 @@ export async function getFinanceDetails(req, res) {
         source: "ექიმი + თანამშრომელი წყვილები, სადაც დაგეგმილი > გაცემული.",
         formula: "გასასტუმრებელი = Σ (დაგეგმილი − გაცემული), მხოლოდ დადებითი",
         columns: [["doctor", "ექიმი"], ["employee", "წარმომადგენელი"], ["planned", "დაგეგმილი", "money"], ["issued", "გაცემული", "money"], ["owed", "ვალი", "money"]],
-        rows,
+        ...page(req, rows),
         total: r2(rows.reduce((s, r) => s + r.owed, 0)),
         meta: `${rows.length} ექიმი`,
         checks,
@@ -289,7 +352,7 @@ export async function getFinanceDetails(req, res) {
       source: "ბიუჯეტების გვერდზე ამ თვეზე შეყვანილი ბიუჯეტები.",
       formula: "გადახდები = Σ „რა თანხას ვუხდით ექიმს“ (მხოლოდ აქტიური ბიუჯეტები)",
       columns: [["date", "თარიღი"], ["doctor", "ექიმი"], ["employee", "წარმომადგენელი"], ["paid", "გადახდილი", "money"], ["status", "სტატუსი"]],
-      rows,
+      ...page(req, rows),
       total: r2(active.reduce((s, r) => s + r.paid, 0)),
       meta: `${active.length} აქტიური ჩანაწერი`,
       checks,
