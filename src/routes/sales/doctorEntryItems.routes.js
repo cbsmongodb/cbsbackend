@@ -11,6 +11,8 @@ import {
   deleteCoefficientOverride,
   getVisitCounts,
   getBudgetSums,
+  getListingPage,
+  getListingFilters,
 } from "./doctorEntryItems.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -18,6 +20,8 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get("/", getListing);
+router.get("/page", getListingPage);
+router.get("/filters", getListingFilters);
 router.get("/snapshot", getDoctorSnapshot);
 router.get("/visit-counts", getVisitCounts);
 router.get("/budget-sums", getBudgetSums);

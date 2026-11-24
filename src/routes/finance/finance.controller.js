@@ -36,7 +36,7 @@ async function pharmacySalesAmount(y, m, scope, prices) {
 
 // ---- filters: ?section=<division id>&group=<group id> ----
 // -> the employee ids of that division / group (inside what the role may see); null = everyone
-async function filterScope(req) {
+export async function filterScope(req) {
   const base = await getScopeEmployeeIds(req.employee);
   const { section, group } = req.query;
   const ok = (v) => v && mongoose.isValidObjectId(String(v));

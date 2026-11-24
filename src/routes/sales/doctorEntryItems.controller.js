@@ -9,6 +9,12 @@ import DrugBonus from "../../models/DrugBonus.js";
 import Drug from "../../models/Drug.js";
 import { budgetSumsByDoctor } from "../../utils/budgetSync.js";
 import { getScopeEmployeeIds, canSeeEmployee } from "../../utils/groupVisibility.js";
+import mongoose from "mongoose";
+import Doctor from "../../models/Doctor.js";
+import Employee from "../../models/Employee.js";
+import Group from "../../models/Group.js";
+import Section from "../../models/Section.js";
+import { filterScope } from "../finance/finance.controller.js";
 import { drugBonuses, doctorBonuses, resolveBonuses, parseMonth, employeeArea } from "../../utils/bonuses.js";
 
 function normalizeToMonthStart(dateLike) {
@@ -528,6 +534,115 @@ export async function getVisitCounts(req, res) {
     res.json(counts);
   } catch (err) {
     console.error("getVisitCounts failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// ================= sales list: everyone / division / group, with pages =================
+const oid = (v) => v && mongoose.isValidObjectId(String(v));
+const rxEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// GET /api/doctor-entry-items/filters — divisions, groups and who is in each (only what this user may see)
+export async function getListingFilters(req, res) {
+  try {
+    const scope = await getScopeEmployeeIds(req.employee);
+    const allowed = scope ? new Set(scope.map(String)) : null;
+    const [sections, groups, people] = await Promise.all([
+      Section.find().select("name groups head").sort({ name: 1 }).lean(),
+      Group.find().select("name section head members").sort({ name: 1 }).lean(),
+      Employee.find(allowed ? { _id: { $in: [...allowed] } } : {}).select("group").lean(),
+    ]);
+    const sectionOf = new Map();
+    sections.forEach((s) => (s.groups || []).forEach((g) => sectionOf.set(String(g), String(s._id))));
+    const byGroup = new Map();
+    const add = (g, e) => {
+      if (!g || !e || (allowed && !allowed.has(String(e)))) return;
+      if (!byGroup.has(String(g))) byGroup.set(String(g), new Set());
+      byGroup.get(String(g)).add(String(e));
+    };
+    people.forEach((p) => add(p.group, p._id));
+    groups.forEach((g) => { add(g._id, g.head); (g.members || []).forEach((m) => add(g._id, m)); });
+    const outGroups = groups
+      .filter((g) => byGroup.has(String(g._id)))
+      .map((g) => ({ id: String(g._id), name: g.name, section: g.section ? String(g.section) : sectionOf.get(String(g._id)) || null, employees: [...byGroup.get(String(g._id))] }));
+    const used = new Set(outGroups.map((g) => g.section).filter(Boolean));
+    res.json({
+      sections: sections.filter((s) => used.has(String(s._id))).map((s) => ({ id: String(s._id), name: s.name, head: s.head ? String(s.head) : null })),
+      groups: outGroups,
+    });
+  } catch (err) {
+    console.error("getListingFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/doctor-entry-items/page?period=MM/YYYY&employee=&section=&group=&q=&page=1&limit=50
+export async function getListingPage(req, res) {
+  try {
+    const { period, employee } = req.query;
+    if (!period) return res.status(400).json({ error: "period is required" });
+    const periodDate = normalizeToMonthStart(period);
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 50));
+
+    const filter = { period: periodDate };
+    if (oid(employee)) {
+      const scopeIds = await getScopeEmployeeIds(req.employee);
+      if (scopeIds && !scopeIds.some((id) => String(id) === String(employee))) {
+        return res.json({ items: [], count: 0, page: 1, limit, totals: {}, pharmacySales: {} });
+      }
+      filter.employee = new mongoose.Types.ObjectId(String(employee));
+    } else {
+      const scope = await filterScope(req); // role scope ∩ division / group
+      if (scope) filter.employee = { $in: scope };
+    }
+
+    // search: doctor (name / ID), drug or rep
+    const q = String(req.query.q || "").trim();
+    if (q) {
+      const words = q.split(/\s+/).map((w) => new RegExp(rxEsc(w), "i"));
+      const personMatch = { $and: words.map((rx) => ({ $or: [{ firstName: rx }, { lastName: rx }] })) };
+      const [docs, drugs, emps] = await Promise.all([
+        Doctor.find({ $or: [personMatch, { uniqueNumber: new RegExp(rxEsc(q), "i") }] }).select("_id").limit(5000).lean(),
+        Drug.find({ name: new RegExp(rxEsc(q), "i") }).select("_id").lean(),
+        Employee.find(personMatch).select("_id").lean(),
+      ]);
+      filter.$or = [
+        { doctor: { $in: docs.map((d) => d._id) } },
+        { drug: { $in: drugs.map((d) => d._id) } },
+        { employee: { $in: emps.map((e) => e._id) } },
+      ];
+    }
+
+    const [count, sums, items] = await Promise.all([
+      DoctorEntryItem.countDocuments(filter),
+      DoctorEntryItem.aggregate([
+        { $match: filter },
+        { $group: { _id: null, prescription: { $sum: "$prescription" }, totalBudget: { $sum: "$totalBudget" }, issuedBudget: { $sum: "$issuedBudget" }, plannedBudget: { $sum: "$plannedBudget" }, difference: { $sum: "$difference" }, doctors: { $addToSet: "$doctor" }, employees: { $addToSet: "$employee" } } },
+        { $project: { _id: 0, prescription: 1, totalBudget: 1, issuedBudget: 1, plannedBudget: 1, difference: 1, doctors: { $size: "$doctors" }, employees: { $size: "$employees" } } },
+      ]),
+      DoctorEntryItem.find(filter)
+        .populate("employee", "firstName lastName")
+        .populate("doctor", "firstName lastName uniqueNumber")
+        .populate("drug", "name price bonus")
+        .populate("hospital", "name")
+        .sort({ employee: 1, doctor: 1, _id: 1 })
+        .skip((pageNum - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    // pharmacy sales only for the reps on this page -> { "<employee>:<drug>": boxes }
+    const pharmacySales = {};
+    const reps = [...new Set(items.map((i) => String(i.employee?._id || i.employee)))];
+    await runLimited(reps.map((emp) => async () => {
+      const m = await pharmacySalesByDrug(emp, periodDate);
+      m.forEach((v, drug) => { pharmacySales[`${emp}:${drug}`] = v; });
+    }));
+
+    res.json({ items, count, page: pageNum, limit, totals: sums[0] || {}, pharmacySales });
+  } catch (err) {
+    console.error("getListingPage failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
