@@ -368,129 +368,159 @@ export async function getAttendanceReport(req, res) {
 // GET /api/reports/staff-performance
 // ?section=&group=&employee=&mode=month|range&month=YYYY-MM&from=&to=&page=&limit=
 //
-// Two filter modes:
-//  - "month": exact calendar month selected -> all 6 metrics returned,
-//    since DoctorEntryItem (prescription/target/sales) is only stored at
-//    month granularity, matching a full-month range exactly.
-//  - "range": arbitrary from/to dates -> only the 3 daily-accurate metrics
-//    (visits, doctorsVisited, paidAmount) are returned; the DoctorEntryItem
-//    -based columns are omitted entirely rather than shown misleadingly
-//    against a whole month that doesn't match the picked range.
+// One row per employee:
+//   visits          = finished visits (status i_went / i_left / completed — same as every other report)
+//   doctorsVisited  = different doctors seen on those visits
+//   totalPaidAmount = what was paid to doctors (active budgets, by budget date)
+// month mode only (these are stored per month):
+//   totalPrescriptionAmount = prescriptions entered × drug price            (Prescription entry)
+//   targetAmount            = the employee's plan × drug price              (Employee plans)
+//   salesAmount             = the employee's pharmacy sales × drug price    (Employee sales)
+//   fulfillment             = salesAmount ÷ targetAmount
+const DONE_VISIT = ["i_went", "i_left", "completed"];
+const SP_H12 = 12 * 3600e3;
+const spR2 = (n) => Math.round((n || 0) * 100) / 100;
+
 export async function getStaffPerformanceReport(req, res) {
   try {
+    const { default: mongoose } = await import("mongoose");
+    const { default: EmployeeSale } = await import("../../models/EmployeeSale.js");
+    const { default: EmployeeTarget } = await import("../../models/EmployeeTarget.js");
+    const { default: MedicineTarget } = await import("../../models/MedicineTarget.js");
+    const { default: Drug } = await import("../../models/Drug.js");
+    const isId = (v) => v && mongoose.isValidObjectId(String(v));
+
     const { section, group, employee, mode, month, from, to } = req.query;
     const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 200);
 
-    // 1. resolve which employees are in scope
-    let employeeFilter = { isActive: true };
-    if (employee) {
-      employeeFilter = { _id: employee };
-    } else if (group) {
-      // Group.members[] is basically never populated in real data — the
-      // real membership signal lives on Employee.group. Query it directly.
-      const memberIds = await Employee.find({ group }).distinct("_id");
-      employeeFilter = { _id: { $in: memberIds } };
-    } else if (section) {
-      const groupIds = await Group.find({ section }).distinct("_id");
-      const memberIds = await Employee.find({ group: { $in: groupIds } }).distinct("_id");
-      employeeFilter = { _id: { $in: memberIds } };
+    // 1. who: one employee / a group / a division / everyone (active) — inside what the viewer may see
+    let ids = null; // null = all active
+    if (isId(employee)) ids = [String(employee)];
+    else if (isId(group) || isId(section)) {
+      let groupIds = [];
+      if (isId(group)) groupIds = [String(group)];
+      else {
+        const sec = await Section.findById(section).select("groups head").lean();
+        const linked = await Group.find({ section }).distinct("_id");
+        groupIds = [...new Set([...(sec?.groups || []).map(String), ...linked.map(String)])];
+      }
+      const set = new Set();
+      (await Employee.find({ group: { $in: groupIds } }).distinct("_id")).forEach((id) => set.add(String(id)));
+      (await Group.find({ _id: { $in: groupIds } }).select("head members").lean()).forEach((g) => {
+        if (g.head) set.add(String(g.head));
+        (g.members || []).forEach((m) => set.add(String(m)));
+      });
+      if (!isId(group)) {
+        const sec = await Section.findById(section).select("head").lean();
+        if (sec?.head) set.add(String(sec.head));
+      }
+      ids = [...set];
     }
-
-    // enforce the viewer's own scope — a division/group manager only ever
-    // sees their own people. Admin/director/finance get null and skip this.
     const scopeIds = await getScopeEmployeeIds(req.employee);
     if (scopeIds) {
-      const scopeSet = new Set(scopeIds.map(String));
-      if (employeeFilter._id && employeeFilter._id.$in) {
-        employeeFilter._id.$in = employeeFilter._id.$in.filter((id) => scopeSet.has(String(id)));
-      } else if (employeeFilter._id) {
-        if (!scopeSet.has(String(employeeFilter._id))) employeeFilter._id = { $in: [] };
-      } else {
-        employeeFilter._id = { $in: scopeIds };
-      }
+      const allowed = new Set(scopeIds.map(String));
+      ids = (ids || [...allowed]).filter((id) => allowed.has(id));
     }
+    const empFilter = { isActive: true };
+    if (ids) empFilter._id = { $in: ids };
+    if (isId(employee)) delete empFilter.isActive; // a chosen person is shown even if inactive
+    const people = await Employee.find(empFilter).select("firstName lastName").sort({ firstName: 1, lastName: 1 }).lean();
+    const empIds = people.map((p) => p._id);
 
-    const total = await Employee.countDocuments(employeeFilter);
-    const employees = await Employee.find(employeeFilter)
-      .select("firstName lastName")
-      .sort({ firstName: 1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
-    // 2. resolve the date range for the daily-accurate metrics, and whether
-    //    the month-only metrics should be computed at all
-    const isMonthMode = mode === "month" && !!month;
-    let rangeStart, rangeEnd, monthStart;
-
+    // 2. when
+    const isMonthMode = mode === "month" && /^\d{4}-\d{2}$/.test(month || "");
+    let rangeStart, rangeEnd, entryWin;
     if (isMonthMode) {
       const [y, m] = month.split("-").map(Number);
-      monthStart = new Date(Date.UTC(y, m - 1, 1));
-      rangeStart = monthStart;
-      rangeEnd = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
+      rangeStart = new Date(`${month}-01T00:00:00+04:00`); // Georgian calendar month
+      const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+      rangeEnd = new Date(new Date(`${ny}-${String(nm).padStart(2, "0")}-01T00:00:00+04:00`).getTime() - 1);
+      // month records ("the 1st") are saved at UTC or Tbilisi midnight -> a window that catches both
+      entryWin = { $gte: new Date(Date.UTC(y, m - 1, 1) - SP_H12), $lt: new Date(Date.UTC(y, m, 1) - SP_H12) };
     } else {
-      rangeStart = from ? dayStart(from) : new Date(new Date().setDate(1));
+      rangeStart = from ? dayStart(from) : new Date(`${new Date(Date.now() + 4 * 3600e3).toISOString().slice(0, 8)}01T00:00:00+04:00`);
       rangeEnd = to ? dayEnd(to) : new Date();
     }
+    const when = { $gte: rangeStart, $lte: rangeEnd };
 
-    // 3. per-employee computation
-    const rows = await Promise.all(
-      employees.map(async (emp) => {
-        const planFilter = {
-          performer: emp._id,
-          period: { $gte: rangeStart, $lte: rangeEnd },
-          status: "completed",
-        };
-        const planIds = await PlanConfiguration.find(planFilter).distinct("_id");
-        const visits = planIds.length;
-        const doctorsVisited = await PlanConfigurationDoctor.countDocuments({
-          planConfiguration: { $in: planIds },
+    // 3. numbers for everyone at once
+    const row = new Map(people.map((p) => [String(p._id), {
+      employeeId: p._id,
+      employeeName: `${p.firstName || ""} ${p.lastName || ""}`.trim(),
+      visits: 0, doctorsVisited: 0, totalPaidAmount: 0,
+    }]));
+
+    const plans = await PlanConfiguration.find({ performer: { $in: empIds }, period: when, status: { $in: DONE_VISIT } }).select("_id performer").lean();
+    const performerOf = new Map(plans.map((p) => [String(p._id), String(p.performer)]));
+    plans.forEach((p) => { const r = row.get(String(p.performer)); if (r) r.visits += 1; });
+    if (plans.length) {
+      const seen = new Map(); // employee -> Set(doctor)
+      (await PlanConfigurationDoctor.find({ planConfiguration: { $in: plans.map((p) => p._id) } }).select("planConfiguration doctor").lean())
+        .forEach((d) => {
+          const e = performerOf.get(String(d.planConfiguration));
+          if (!e) return;
+          if (!seen.has(e)) seen.set(e, new Set());
+          seen.get(e).add(String(d.doctor || d._id));
+        });
+      seen.forEach((s, e) => { const r = row.get(e); if (r) r.doctorsVisited = s.size; });
+    }
+
+    (await Budget.aggregate([
+      { $match: { employee: { $in: empIds }, date: when, isActive: { $ne: false } } },
+      { $group: { _id: "$employee", sum: { $sum: "$paidAmount" } } },
+    ])).forEach((b) => { const r = row.get(String(b._id)); if (r) r.totalPaidAmount = spR2(b.sum); });
+
+    if (isMonthMode) {
+      const price = new Map((await Drug.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
+      row.forEach((r) => Object.assign(r, { totalPrescriptionAmount: 0, prescriptionBoxes: 0, targetAmount: 0, targetBoxes: 0, salesAmount: 0, salesBoxes: 0 }));
+
+      (await DoctorEntryItem.find({ employee: { $in: empIds }, period: entryWin }).select("employee drug prescription").lean())
+        .forEach((it) => {
+          const r = row.get(String(it.employee));
+          if (!r) return;
+          r.prescriptionBoxes += it.prescription || 0;
+          r.totalPrescriptionAmount += (it.prescription || 0) * (price.get(String(it.drug)) || 0);
         });
 
-        const paidAgg = await Budget.aggregate([
-          { $match: { employee: emp._id, date: { $gte: rangeStart, $lte: rangeEnd } } },
-          { $group: { _id: null, sum: { $sum: "$paidAmount" } } },
-        ]);
-        const totalPaidAmount = Math.round((paidAgg[0]?.sum || 0) * 100) / 100;
-
-        const row = {
-          employeeId: emp._id,
-          employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-          visits,
-          doctorsVisited,
-          totalPaidAmount,
-        };
-
-        if (isMonthMode) {
-          const items = await DoctorEntryItem.find({ employee: emp._id, period: monthStart })
-            .select("drug prescription quota sale")
-            .populate("drug", "price")
-            .lean();
-          let prescriptionAmount = 0;
-          let targetAmount = 0;
-          let salesAmount = 0;
-          items.forEach((it) => {
-            const price = it.drug?.price || 0;
-            prescriptionAmount += (it.prescription || 0) * price;
-            targetAmount += (it.quota || 0) * price;
-            salesAmount += (it.sale || 0) * price;
+      // the plan (EmployeeTarget) and pharmacy sales (EmployeeSale): header per employee + drug lines
+      const linesOf = async (Model, type, boxKey, amountKey) => {
+        const heads = await Model.find({ employee: { $in: empIds }, date: entryWin }).select("_id employee").lean();
+        if (!heads.length) return;
+        const owner = new Map(heads.map((h) => [String(h._id), String(h.employee)]));
+        (await MedicineTarget.find({ medicineTargatableType: type, medicineTargatableId: { $in: heads.map((h) => h._id) } }).select("medicineTargatableId drug totalNoOfBoxes").lean())
+          .forEach((l) => {
+            const r = row.get(owner.get(String(l.medicineTargatableId)));
+            if (!r) return;
+            r[boxKey] += l.totalNoOfBoxes || 0;
+            r[amountKey] += (l.totalNoOfBoxes || 0) * (price.get(String(l.drug)) || 0);
           });
-          row.totalPrescriptionAmount = Math.round(prescriptionAmount * 100) / 100;
-          row.targetAmount = Math.round(targetAmount * 100) / 100;
-          row.salesAmount = Math.round(salesAmount * 100) / 100;
-        }
+      };
+      await linesOf(EmployeeTarget, "EmployeeTarget", "targetBoxes", "targetAmount");
+      await linesOf(EmployeeSale, "EmployeeSale", "salesBoxes", "salesAmount");
 
-        return row;
-      })
-    );
+      row.forEach((r) => {
+        ["totalPrescriptionAmount", "targetAmount", "salesAmount", "prescriptionBoxes", "targetBoxes", "salesBoxes"].forEach((k) => { r[k] = spR2(r[k]); });
+        r.fulfillment = r.targetAmount > 0 ? Math.round((r.salesAmount / r.targetAmount) * 1000) / 10 : null;
+      });
+    }
 
+    // 4. totals + page
+    const all = [...row.values()];
+    const sum = (k) => spR2(all.reduce((s, r) => s + (r[k] || 0), 0));
+    const totals = { visits: sum("visits"), doctorsVisited: sum("doctorsVisited"), totalPaidAmount: sum("totalPaidAmount") };
+    if (isMonthMode) {
+      Object.assign(totals, { totalPrescriptionAmount: sum("totalPrescriptionAmount"), targetAmount: sum("targetAmount"), salesAmount: sum("salesAmount") });
+      totals.fulfillment = totals.targetAmount > 0 ? Math.round((totals.salesAmount / totals.targetAmount) * 1000) / 10 : null;
+    }
+    const total = all.length;
     res.json({
-      docs: rows,
+      docs: all.slice((page - 1) * limit, page * limit),
       total,
       page,
       pages: Math.max(Math.ceil(total / limit), 1),
       limit,
+      totals,
       mode: isMonthMode ? "month" : "range",
     });
   } catch (err) {
