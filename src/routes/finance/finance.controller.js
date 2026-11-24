@@ -28,7 +28,7 @@ async function pharmacySalesAmount(y, m, scope, prices) {
     .select("drug totalNoOfBoxes").lean();
   let amount = 0, boxes = 0;
   lines.forEach((l) => { boxes += l.totalNoOfBoxes || 0; amount += (l.totalNoOfBoxes || 0) * (prices.get(String(l.drug)) || 0); });
-  return { amount: r2(amount), boxes };
+  return { amount: r2(amount), boxes: r2(boxes) };
 }
 
 // GET /api/finance/summary?month=YYYY-MM
@@ -163,7 +163,7 @@ export async function getFinanceDetails(req, res) {
       if (noPrice) checks.push({ level: "error", text: `${noPrice} წამალს ფასი არ აქვს (0 ₾) — მათი გაყიდვები თანხაში არ ითვლება. Drugs გვერდზე ფასი შეავსე.` });
       if (noDrug) checks.push({ level: "error", text: `${noDrug} ხაზი წაშლილ წამალზეა მიბმული — თანხაში არ ითვლება.` });
       if (empty) checks.push({ level: "warn", text: `${empty} გაყიდვის ჩანაწერი ცარიელია (წამლები არ აქვს).` });
-      const rows = [...byDrug.values()].map((r) => ({ ...r, amount: r2(r.amount) })).sort((a, b) => b.amount - a.amount);
+      const rows = [...byDrug.values()].map((r) => ({ ...r, boxes: r2(r.boxes), amount: r2(r.amount) })).sort((a, b) => b.amount - a.amount);
       return res.json({
         card,
         source: "Employee Sales გვერდზე ატვირთული აფთიაქების გაყიდვები ამ თვისთვის (ყველა თანამშრომელი).",
