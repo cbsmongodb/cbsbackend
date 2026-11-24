@@ -270,13 +270,16 @@ export async function computeBudgetAmounts(req, res) {
       const win = monthWindow(parseMonth(date));
       let lines = await DoctorEntryItem.find({ employee, doctor, period: win })
         .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
+      const own = lines.length > 0; // false = lines entered by other reps for this doctor
       if (!lines.length) {
         lines = await DoctorEntryItem.find({ doctor, period: win })
           .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
       }
       if (lines.length) {
-        let rx = 0, sales = 0, pay = 0, target = 0;
+        let rx = 0, sales = 0, pay = 0, target = 0, rxBoxes = 0, planBoxes = 0;
         for (const it of lines) {
+          rxBoxes += it.prescription || 0;
+          planBoxes += it.quota || 0;
           const price = it.drug?.price || 0;
           const sold = (it.coefficient || 0) > 0 ? (it.prescription || 0) * it.coefficient : it.sale || 0;
           rx += (it.prescription || 0) * price;
@@ -298,6 +301,7 @@ export async function computeBudgetAmounts(req, res) {
           targetAmount: r2(target),
           advanceAmount: r2(lastBudget?.advanceAmount),
           openingBalance: opening,
+          entry: { own, lines: lines.length, rxBoxes: r2(rxBoxes), planBoxes: r2(planBoxes) },
         });
       }
     }
@@ -363,6 +367,13 @@ export async function computeBudgetAmounts(req, res) {
       targetAmount: Math.round(targetAmount * 100) / 100,
       advanceAmount: Math.round(advanceAmount * 100) / 100,
       openingBalance: opening,
+      entry: {
+        own: true,
+        legacy: true,
+        lines: items.length + targetRows.length,
+        rxBoxes: Math.round(items.reduce((s, i) => s + (i.totalNoOfBoxes || 0), 0) * 100) / 100,
+        planBoxes: Math.round(targetRows.reduce((s, t) => s + (t.totalNoOfBoxes || 0), 0) * 100) / 100,
+      },
     });
   } catch (err) {
     console.error("computeBudgetAmounts failed:", err);
