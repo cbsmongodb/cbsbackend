@@ -1,4 +1,7 @@
 import DoctorEntryItem from "../../models/DoctorEntryItem.js";
+import EmployeeSale from "../../models/EmployeeSale.js";
+import MedicineTarget from "../../models/MedicineTarget.js";
+import CoefficientOverride from "../../models/CoefficientOverride.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 
 // GET /api/reports/prescriptions?from=YYYY-MM&to=YYYY-MM&employee=
@@ -61,6 +64,43 @@ export async function getPrescriptionsReport(req, res) {
       .limit(20000)
       .lean();
 
+    // sold per line, the same way the budgets count it:
+    //   coefficient = rep's pharmacy sales of the drug in the month ÷ all their prescriptions of it
+    //   (an admin coefficient override wins), sold = prescription × coefficient
+    const idOf = (x) => String(x?._id || x || "");
+    const keyOf = (i) => `${idOf(i.employee)}|${monthOf(i.period)}|${idOf(i.drug)}`;
+    const rxTotal = new Map(), typedSale = new Map();
+    items.forEach((i) => {
+      const k = keyOf(i);
+      rxTotal.set(k, (rxTotal.get(k) || 0) + (i.prescription || 0));
+      typedSale.set(k, (typedSale.get(k) || 0) + (i.sale || 0));
+    });
+    const emps = [...new Set(items.map((i) => idOf(i.employee)).filter(Boolean))];
+    const months = [...new Set(items.map((i) => monthOf(i.period)))];
+    const pharmacy = new Map();
+    for (const m of months) {
+      const sales = await EmployeeSale.find({ employee: { $in: emps }, date: { $gte: monthStart(m), $lt: nextMonthStart(m) } }).select("_id employee").lean();
+      if (!sales.length) continue;
+      const empOf = new Map(sales.map((s) => [String(s._id), String(s.employee)]));
+      const lines = await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
+        .select("medicineTargatableId drug totalNoOfBoxes").lean();
+      lines.forEach((l) => {
+        const k = `${empOf.get(String(l.medicineTargatableId))}|${m}|${l.drug}`;
+        pharmacy.set(k, (pharmacy.get(k) || 0) + (l.totalNoOfBoxes || 0));
+      });
+    }
+    const overrides = new Map(
+      (await CoefficientOverride.find({ employee: { $in: emps }, period: { $gte: monthStart(from), $lt: nextMonthStart(to) } }).select("employee drug period coefficient").lean())
+        .map((o) => [`${o.employee}|${monthOf(o.period)}|${o.drug}`, o.coefficient])
+    );
+    const coefOf = (k) => {
+      if (overrides.has(k)) return overrides.get(k);
+      const rx = rxTotal.get(k) || 0;
+      if (!rx) return 0;
+      return (pharmacy.has(k) ? pharmacy.get(k) : typedSale.get(k) || 0) / rx;
+    };
+    const r2 = (n) => Math.round(n * 100) / 100;
+
     res.json(
       items.map((i) => ({
         _id: i._id,
@@ -72,6 +112,8 @@ export async function getPrescriptionsReport(req, res) {
         drugName: i.drug?.name || "",
         prescription: i.prescription || 0,
         sale: i.sale || 0,
+        coefficient: r2(coefOf(keyOf(i))),
+        sold: r2((i.prescription || 0) * coefOf(keyOf(i))),
       }))
     );
   } catch (err) {
