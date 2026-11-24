@@ -13,6 +13,23 @@ import { getScopeEmployeeIds, applyEmployeeScope, canSeeEmployee } from "../../u
 
 const OTHER_DIVISION = { error: "ეს ბიუჯეტი სხვა დივიზიონს ეკუთვნის" };
 
+// doctorBalance: the doctor's balance carried in from earlier months
+// (this doctor + this employee, budgets from October 2026 on):
+//   + what we paid the doctor  − what the prescriptions accrued
+// negative = we still owe the doctor, positive = paid ahead.
+// Nothing is stored — it's recalculated from the saved budgets, so old data stays as it is.
+const BALANCE_FROM = new Date(2026, 9, 1);
+async function openingBalance(employee, doctor, monthStart) {
+  if (monthStart <= BALANCE_FROM) return 0;
+  const rows = await Budget.find({
+    employee,
+    doctor,
+    isActive: { $ne: false },
+    date: { $gte: BALANCE_FROM, $lt: monthStart },
+  }).select("paidAmount payableAmt").lean();
+  return rows.reduce((s, b) => s + (b.paidAmount || 0) - (b.payableAmt || 0), 0);
+}
+
 const POPULATE = "employee doctor region section group";
 
 // auto-fills region/section/group from the employee's Group —
@@ -243,6 +260,7 @@ export async function computeBudgetAmounts(req, res) {
     const d = new Date(date);
     const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
     const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    const opening = Math.round((await openingBalance(employee, doctor, monthStart)) * 100) / 100;
 
     // current system: prescription entry lines (their bonus comes from the Bonuses page).
     // The employee's own lines; for a group manager (who enters no prescriptions) the
@@ -279,6 +297,7 @@ export async function computeBudgetAmounts(req, res) {
           payableAmt: r2(pay),
           targetAmount: r2(target),
           advanceAmount: r2(lastBudget?.advanceAmount),
+          openingBalance: opening,
         });
       }
     }
@@ -343,6 +362,7 @@ export async function computeBudgetAmounts(req, res) {
       payableAmt: Math.round(payableAmt * 100) / 100,
       targetAmount: Math.round(targetAmount * 100) / 100,
       advanceAmount: Math.round(advanceAmount * 100) / 100,
+      openingBalance: opening,
     });
   } catch (err) {
     console.error("computeBudgetAmounts failed:", err);
