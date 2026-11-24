@@ -68,9 +68,9 @@ export async function drugBonuses(month, drugIds, area = "tbilisi") {
 }
 
 // doctor-specific bonuses of a month: Map("doctorId|drugId" -> value)
-export async function doctorBonuses(month, filter = {}) {
-  const rows = await DoctorDrugBonus.find({ ...filter, period: monthWindow(month) }).select("doctor drug value").lean();
-  return new Map(rows.map((r) => [`${r.doctor}|${r.drug}`, r.value]));
+export async function doctorBonuses(month, filter = {}, area = "tbilisi") {
+  const rows = await DoctorDrugBonus.find({ ...filter, period: monthWindow(month) }).select("doctor drug value regionValue").lean();
+  return new Map(rows.map((r) => [`${r.doctor}|${r.drug}`, area === "region" && r.regionValue != null ? r.regionValue : r.value]));
 }
 
 // final bonus for doctor + drug pairs: Map("doctorId|drugId" -> value). Pairs with no bonus at all are left out.
@@ -79,7 +79,7 @@ export async function resolveBonuses(month, pairs, { area = "tbilisi" } = {}) {
   if (!pairs.length) return out;
   const [byDrug, byDoctor] = await Promise.all([
     drugBonuses(month, pairs.map((p) => p.drug), area),
-    doctorBonuses(month, { drug: { $in: [...new Set(pairs.map((p) => String(p.drug)))] }, doctor: { $in: [...new Set(pairs.map((p) => String(p.doctor)))] } }),
+    doctorBonuses(month, { drug: { $in: [...new Set(pairs.map((p) => String(p.drug)))] }, doctor: { $in: [...new Set(pairs.map((p) => String(p.doctor)))] } }, area),
   ]);
   for (const p of pairs) {
     const k = `${p.doctor}|${p.drug}`;

@@ -47,7 +47,7 @@ router.get("/", async (req, res) => {
       Drug.find(drugFilter).select("name price bonus").sort({ name: 1 }).lean(),
       DrugBonus.find({ period: monthWindow(month) }).select("drug value regionValue").lean(),
       DoctorDrugBonus.find({ period: monthWindow(month) })
-        .select("doctor drug value")
+        .select("doctor drug value regionValue")
         .populate({ path: "doctor", select: "firstName lastName uniqueNumber profile", populate: { path: "profile", select: "name" } })
         .lean(),
     ]);
@@ -74,7 +74,7 @@ router.get("/", async (req, res) => {
           inheritedFrom: d.bonus > 0 ? "drug" : hasDefault(month) ? "default" : "none",
           doctors: (byDrug.get(String(d._id)) || [])
             .filter((o) => o.doctor)
-            .map((o) => ({ _id: o._id, value: o.value, doctor: o.doctor }))
+            .map((o) => ({ _id: o._id, value: o.value, regionValue: o.regionValue ?? null, doctor: o.doctor }))
             .sort((a, b) => `${a.doctor.firstName} ${a.doctor.lastName}`.localeCompare(`${b.doctor.firstName} ${b.doctor.lastName}`)),
         };
       }),
@@ -157,9 +157,13 @@ router.put("/batch", async (req, res) => {
       hasValue: "value" in d, value: num(d.value),
       hasRegion: "regionValue" in d, regionValue: num(d.regionValue),
     }));
-    const docRows = doctors.map((d) => ({ drug: d.drug, doctor: d.doctor, value: num(d.value) }));
+    const docRows = doctors.map((d) => ({
+      drug: d.drug, doctor: d.doctor,
+      value: num(d.value),
+      hasRegion: "regionValue" in d, regionValue: num(d.regionValue),
+    }));
     drugRows.forEach((r) => { if (!isId(r.drug) || Number.isNaN(r.value) || Number.isNaN(r.regionValue)) bad.push(r.drug); });
-    docRows.forEach((r) => { if (!isId(r.drug) || !isId(r.doctor) || Number.isNaN(r.value)) bad.push(`${r.drug}|${r.doctor}`); });
+    docRows.forEach((r) => { if (!isId(r.drug) || !isId(r.doctor) || Number.isNaN(r.value) || Number.isNaN(r.regionValue)) bad.push(`${r.drug}|${r.doctor}`); });
     if (bad.length) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი", bad });
     if (notMine(await allowedDrugIds(req), [...drugRows, ...docRows].map((r) => r.drug))) return res.status(403).json(FORBIDDEN);
     if (!drugRows.length && !docRows.length) return res.json({ ok: true, saved: 0, recalculated: 0 });
@@ -186,12 +190,21 @@ router.put("/batch", async (req, res) => {
       }
     }
     for (const r of docRows) {
-      if (r.value === null) {
+      const cur = r.hasRegion ? null : await DoctorDrugBonus.findOne({ drug: r.drug, doctor: r.doctor, period: monthWindow(month) }).select("regionValue").lean();
+      const regionValue = r.hasRegion ? r.regionValue : cur?.regionValue ?? null;
+      if (r.value === null && regionValue === null) {
         await DoctorDrugBonus.deleteMany({ drug: r.drug, doctor: r.doctor, period: monthWindow(month) });
       } else {
+        // only the region bonus typed -> Tbilisi gets the drug's bonus of the month
+        let tbilisi = r.value;
+        if (tbilisi === null) {
+          const own = await DrugBonus.findOne({ drug: r.drug, period: monthWindow(month) }).select("value").lean();
+          const d = own ? null : await Drug.findById(r.drug).select("bonus").lean();
+          tbilisi = own ? own.value : d?.bonus > 0 ? d.bonus : hasDefault(month) ? DEFAULT_BONUS : 0;
+        }
         await DoctorDrugBonus.findOneAndUpdate(
           { drug: r.drug, doctor: r.doctor, period: monthStart(month) },
-          { $set: { value: r.value, setBy: req.employee?._id } },
+          { $set: { value: tbilisi, regionValue, setBy: req.employee?._id } },
           { upsert: true, setDefaultsOnInsert: true }
         );
       }
@@ -217,7 +230,7 @@ router.post("/copy", async (req, res) => {
     const [srcDrug, dstDrug, srcDoc, dstDoc] = await Promise.all([
       DrugBonus.find({ ...only, period: monthWindow(from) }).select("drug value regionValue").lean(),
       DrugBonus.find({ ...only, period: monthWindow(to) }).select("drug").lean(),
-      DoctorDrugBonus.find({ ...only, period: monthWindow(from) }).select("drug doctor value").lean(),
+      DoctorDrugBonus.find({ ...only, period: monthWindow(from) }).select("drug doctor value regionValue").lean(),
       DoctorDrugBonus.find({ ...only, period: monthWindow(to) }).select("drug doctor").lean(),
     ]);
     const haveDrug = new Set(dstDrug.map((b) => String(b.drug)));
@@ -228,7 +241,7 @@ router.post("/copy", async (req, res) => {
       await DrugBonus.insertMany(newDrug.map((b) => ({ drug: b.drug, period: monthStart(to), value: b.value, regionValue: b.regionValue ?? null, setBy: req.employee?._id })), { ordered: false });
     }
     if (newDoc.length) {
-      await DoctorDrugBonus.insertMany(newDoc.map((b) => ({ drug: b.drug, doctor: b.doctor, period: monthStart(to), value: b.value, setBy: req.employee?._id })), { ordered: false });
+      await DoctorDrugBonus.insertMany(newDoc.map((b) => ({ drug: b.drug, doctor: b.doctor, period: monthStart(to), value: b.value, regionValue: b.regionValue ?? null, setBy: req.employee?._id })), { ordered: false });
     }
     const touched = [...new Set([...newDrug, ...newDoc].map((b) => String(b.drug)))];
     const r = touched.length ? await restampBonuses(to, { drugs: touched }) : { changed: 0 };

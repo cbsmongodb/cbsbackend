@@ -203,7 +203,7 @@ export async function getListing(req, res) {
       drugTotals: [...summaryByDrug.values()],
       pharmacySales: Object.fromEntries(pharmacy),
       bonuses: Object.fromEntries(await bonusesForPeriod((await Drug.find({ isActive: { $ne: false } }).select("_id").lean()).map((d) => d._id), periodDate, await employeeArea(employee))),
-      doctorBonuses: Object.fromEntries(await doctorBonuses(parseMonth(periodDate))),
+      doctorBonuses: Object.fromEntries(await doctorBonuses(parseMonth(periodDate), {}, await employeeArea(employee))),
     });
   } catch (err) {
     console.error("getListing failed:", err);

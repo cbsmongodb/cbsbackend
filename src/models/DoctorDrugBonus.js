@@ -9,7 +9,9 @@ const doctorDrugBonusSchema = new mongoose.Schema(
     drug: { type: mongoose.Schema.Types.ObjectId, ref: "Drug", required: true },
     // the 1st of the month, UTC midnight (same as DrugBonus)
     period: { type: Date, required: true },
-    value: { type: Number, required: true, min: 0 },
+    value: { type: Number, required: true, min: 0 }, // Tbilisi
+    // region reps' bonus for this doctor; null = the same as Tbilisi (value)
+    regionValue: { type: Number, default: null, min: 0 },
     setBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
   },
   { timestamps: true }
