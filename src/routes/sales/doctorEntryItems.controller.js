@@ -639,16 +639,32 @@ export async function getListingPage(req, res) {
         .lean(),
     ]);
 
-    // a drug is chosen -> who entered how much of it
+    // a drug is chosen -> real pharmacy sales of it per rep ("Sales from pharmacies"), not prescriptions
     let byEmployee = null;
     if (filter.drug) {
-      byEmployee = await DoctorEntryItem.aggregate([
-        { $match: filter },
-        { $group: { _id: "$employee", rows: { $sum: 1 }, doctors: { $addToSet: "$doctor" }, quota: { $sum: "$quota" }, prescription: { $sum: "$prescription" }, totalBudget: { $sum: "$totalBudget" }, issuedBudget: { $sum: "$issuedBudget" } } },
-        { $lookup: { from: Employee.collection.name, localField: "_id", foreignField: "_id", as: "e" } },
-        { $project: { _id: 0, employee: "$_id", name: { $trim: { input: { $concat: [{ $ifNull: [{ $first: "$e.firstName" }, ""] }, " ", { $ifNull: [{ $first: "$e.lastName" }, ""] }] } } }, rows: 1, doctors: { $size: "$doctors" }, quota: 1, prescription: 1, totalBudget: 1, issuedBudget: 1 } },
-        { $sort: { prescription: -1, totalBudget: -1 } },
-      ]);
+      const next = new Date(periodDate.getFullYear(), periodDate.getMonth() + 1, 1);
+      const saleFilter = { date: { $gte: new Date(periodDate.getTime() - 12 * 3600e3), $lt: new Date(next.getTime() - 12 * 3600e3) } };
+      if (filter.employee) saleFilter.employee = filter.employee; // one rep / the division / group / role scope
+      const sales = await EmployeeSale.find(saleFilter).select("_id employee").lean();
+      const empOf = new Map(sales.map((s) => [String(s._id), String(s.employee)]));
+      const lines = sales.length
+        ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) }, drug: filter.drug })
+          .select("medicineTargatableId totalNoOfBoxes").lean()
+        : [];
+      const boxes = new Map();
+      lines.forEach((l) => {
+        const e = empOf.get(String(l.medicineTargatableId));
+        if (e) boxes.set(e, (boxes.get(e) || 0) + (l.totalNoOfBoxes || 0));
+      });
+      const price = (await Drug.findById(filter.drug).select("price").lean())?.price || 0;
+      const people = await Employee.find({ _id: { $in: [...boxes.keys()] } }).select("firstName lastName").lean();
+      byEmployee = people
+        .map((p) => {
+          const n = Math.round((boxes.get(String(p._id)) || 0) * 100) / 100;
+          return { employee: String(p._id), name: `${p.firstName || ""} ${p.lastName || ""}`.trim(), boxes: n, amount: Math.round(n * price * 100) / 100 };
+        })
+        .filter((r) => r.boxes !== 0)
+        .sort((a, b) => b.boxes - a.boxes);
     }
 
     // pharmacy sales only for the reps on this page -> { "<employee>:<drug>": boxes }
