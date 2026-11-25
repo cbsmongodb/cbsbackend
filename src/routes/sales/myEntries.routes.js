@@ -235,4 +235,59 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// PUT /api/my-entries/:id/bonus  { value }   — a manager changes the bonus of ONE line.
+// Saved as this doctor's own bonus for this drug and month (the same record the Bonuses page
+// shows under "doctors"). Only the side of the line's rep changes: a Tbilisi rep's line -> the
+// doctor's Tbilisi bonus, a region rep's line -> the doctor's region bonus. The drug's general
+// bonus and other doctors are not touched. Empty value -> back to the drug's bonus.
+router.put("/:id/bonus", async (req, res) => {
+  try {
+    const role = (req.employee?.role?.name || "").toLowerCase().trim();
+    if (!(/(group|division) manager/.test(role) || ["admin", "director"].includes(role))) {
+      return res.status(403).json({ error: "ბონუსის შეცვლა მხოლოდ მენეჯერს შეუძლია" });
+    }
+    const item = await DoctorEntryItem.findById(req.params.id).select("employee doctor drug period").lean();
+    if (!item) return res.status(404).json({ error: "Entry not found" });
+    if (!(await canSeeEmployee(req.employee, item.employee))) return res.status(403).json({ error: "Forbidden" });
+    const { seesEverything, getVisibleDrugIds } = await import("../../utils/groupVisibility.js");
+    if (role !== "admin" && !seesEverything(req.employee)) {
+      const mine = new Set((await getVisibleDrugIds(req.employee)).map(String));
+      if (!mine.has(String(item.drug))) return res.status(403).json({ error: "ეს მედიკამენტი თქვენს დივიზიონს არ ეკუთვნის" });
+    }
+
+    const raw = req.body?.value;
+    const empty = raw === null || raw === undefined || String(raw).trim() === "";
+    const v = empty ? null : Math.round(Number(String(raw).replace(",", ".")) * 100) / 100;
+    if (!empty && (!Number.isFinite(v) || v < 0)) return res.status(400).json({ error: "ბონუსი უნდა იყოს 0 ან მეტი რიცხვი" });
+
+    const B = await import("../../utils/bonuses.js");
+    const { default: DoctorDrugBonus } = await import("../../models/DoctorDrugBonus.js");
+    const month = B.parseMonth(item.period);
+    const area = await B.employeeArea(item.employee);
+    // the drug's own bonus this month (what applies without a doctor bonus), both sides
+    const [dt, dr] = await Promise.all([B.drugBonuses(month, [item.drug], "tbilisi"), B.drugBonuses(month, [item.drug], "region")]);
+    const drugTb = dt.get(String(item.drug))?.value ?? 0;
+    const drugRg = dr.get(String(item.drug))?.value ?? drugTb;
+
+    const cur = await DoctorDrugBonus.findOne({ doctor: item.doctor, drug: item.drug, period: B.monthWindow(month) }).lean();
+    // today's doctor bonus on each side (or the drug's when the doctor has none)
+    let tb = cur ? cur.value : drugTb;
+    let rg = cur ? (cur.regionValue ?? cur.value) : drugRg;
+    if (area === "region") rg = empty ? drugRg : v;
+    else tb = empty ? drugTb : v;
+
+    await DoctorDrugBonus.deleteMany({ doctor: item.doctor, drug: item.drug, period: B.monthWindow(month) });
+    if (tb !== drugTb || rg !== drugRg) {
+      // the other side is written out as it was, so it does not move with this change
+      await DoctorDrugBonus.create({ doctor: item.doctor, drug: item.drug, period: B.monthStart(month), value: tb, regionValue: rg, setBy: req.employee._id });
+    }
+    const r = await B.restampBonuses(month, { drug: item.drug, doctor: item.doctor });
+    const fresh = await DoctorEntryItem.findById(item._id).select("budget").lean();
+    res.json({ _id: item._id, budget: fresh?.budget ?? 0, doctor: String(item.doctor), drug: String(item.drug), recalculated: r.changed });
+  } catch (err) {
+    console.error("my-entries bonus failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 export default router;
