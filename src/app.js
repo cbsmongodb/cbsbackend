@@ -131,8 +131,8 @@ app.use(
   app.use("/api/profiles", requirePermissionExceptRead("profiles"), profilesRoutes);
 
   app.use("/api/drugs", requirePermission("drugs"), drugsRoutes);
-  app.use("/api/product-types", requirePermission("product_types"), productTypeRoutes);
-  app.use("/api/manufacturers", requirePermission("manufacturers"), manufacturerRoutes);
+  app.use("/api/product-types", requirePermissionExceptRead("product_types"), productTypeRoutes);
+  app.use("/api/manufacturers", requirePermissionExceptRead("manufacturers"), manufacturerRoutes);
   app.use(
     "/api/producing-countries",
     requirePermission("manufacturer_countries"),
