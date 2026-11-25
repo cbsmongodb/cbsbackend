@@ -452,7 +452,13 @@ export async function getAnalytics(req, res) {
       repsByDoctorMonth.get(dm).add(String(l._id.e));
     }
     const groupEmpIds = [...new Set([...budgetsAll.map((b) => String(b.employee)), ...lines.map((l) => String(l._id.e))])];
-    const groupEmps = groupEmpIds.length ? await Employee.find({ _id: { $in: groupEmpIds } }).select("firstName lastName group").lean() : [];
+    const groupEmps = groupEmpIds.length ? await Employee.find({ _id: { $in: groupEmpIds } }).select("firstName lastName group role").populate("role", "name").lean() : [];
+    // only a MANAGER's budget goes onto a rep's line (managers pay, but do not enter prescriptions).
+    // A rep's budget for a doctor they have no prescription for stays on its own row, under their name.
+    const { default: SectionM } = await import("../../models/Section.js");
+    const heads = new Set([...(await Group.distinct("head")), ...(await SectionM.distinct("head"))].filter(Boolean).map(String));
+    const roleOf = new Map(groupEmps.map((e) => [String(e._id), (e.role?.name || "").toLowerCase()]));
+    const isManager = (id) => heads.has(id) || /manager|მენეჯერ|director|head/.test(roleOf.get(id) || "");
     const groupOf = new Map(groupEmps.map((e) => [String(e._id), String(e.group || "")]));
     const shortName = new Map(groupEmps.map((e) => [String(e._id), [e.firstName, e.lastName].filter(Boolean).join(" ")]));
 
@@ -463,6 +469,10 @@ export async function getAnalytics(req, res) {
       const emp = String(b.employee);
       const dm = `${b.doctor}|${ymOf(b.date)}`;
       if (lineKeys.has(`${emp}|${dm}`)) continue; // the employee has their own line: normal case
+      if (!isManager(emp)) { // a rep: never onto someone else's line
+        if (mineIds.has(String(b._id))) ownRowWhy.set(`${emp}|${dm}`, "noPrescription");
+        continue;
+      }
       const reps = [...(repsByDoctorMonth.get(dm) || [])].filter((e) => e !== emp);
       const sameGroup = reps.filter((e) => groupOf.get(e) && groupOf.get(e) === groupOf.get(emp));
       const pick = sameGroup.length ? sameGroup : reps;
