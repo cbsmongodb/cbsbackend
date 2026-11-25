@@ -177,7 +177,8 @@ export async function getBudgetAllotment(req, res) {
     // allotmentFromDataEntry: target / sales / prescriptions come from Data Entry
     // (DoctorEntryItem, monthly) - the same numbers the reports and Data Entry page show
     const sd = new Date(startDate.getTime() + 4 * 3600e3); // Georgian calendar date
-    const monthFrom = new Date(Date.UTC(sd.getUTCFullYear(), sd.getUTCMonth(), 1));
+    // month records ("the 1st") are saved at UTC or Tbilisi midnight -> start 12h earlier to catch both
+    const monthFrom = new Date(Date.UTC(sd.getUTCFullYear(), sd.getUTCMonth(), 1) - 12 * 3600e3);
 
     // independent queries -> all at the same time
     const [docs, employee, entries, chartData] = await Promise.all([
@@ -192,7 +193,7 @@ export async function getBudgetAllotment(req, res) {
         .populate("drug", "price")
         .lean(),
       Budget.aggregate([
-        { $match: { ...filter, employee: new Budget.base.Types.ObjectId(String(employeeId)) } },
+        { $match: { ...filter, isActive: { $ne: false }, employee: new Budget.base.Types.ObjectId(String(employeeId)) } },
         { $group: { _id: "$doctor", paidAmount: { $sum: "$paidAmount" } } },
         { $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" } },
         { $unwind: { path: "$doctor", preserveNullAndEmptyArrays: true } },
@@ -207,16 +208,23 @@ export async function getBudgetAllotment(req, res) {
       ]),
     ]);
 
-    const totalPaidAmount = Math.round(docs.reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
+    // deleted budgets are listed in the table but not counted
+    const totalPaidAmount = Math.round(docs.filter((d) => d.isActive !== false).reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
     let totalPrescriptionAmount = 0;
-    let totalSalesAmount = 0;
-    let totalTargetAmount = 0;
-    entries.forEach((it) => {
-      const price = it.drug?.price || 0;
-      totalPrescriptionAmount += (it.prescription || 0) * price;
-      totalSalesAmount += (it.sale || 0) * price;
-      totalTargetAmount += (it.quota || 0) * price;
-    });
+    entries.forEach((it) => { totalPrescriptionAmount += (it.prescription || 0) * (it.drug?.price || 0); });
+    // plan = "Employee plans", sales = "Employee sales" (pharmacy), boxes × price — the same as Staff performance
+    const { default: EmployeeSale } = await import("../../models/EmployeeSale.js");
+    const { default: EmployeeTarget } = await import("../../models/EmployeeTarget.js");
+    const { default: DrugModel } = await import("../../models/Drug.js");
+    const price = new Map((await DrugModel.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
+    const boxesAmount = async (Model, type) => {
+      const heads = await Model.find({ employee: employeeId, date: { $gte: monthFrom, $lte: endDate } }).select("_id").lean();
+      if (!heads.length) return 0;
+      const lines = await MedicineTarget.find({ medicineTargatableType: type, medicineTargatableId: { $in: heads.map((h) => h._id) } }).select("drug totalNoOfBoxes").lean();
+      return lines.reduce((s, l) => s + (l.totalNoOfBoxes || 0) * (price.get(String(l.drug)) || 0), 0);
+    };
+    const totalSalesAmount = await boxesAmount(EmployeeSale, "EmployeeSale");
+    const totalTargetAmount = await boxesAmount(EmployeeTarget, "EmployeeTarget");
 
     res.json({
       employeeName: employee?.name || "—",

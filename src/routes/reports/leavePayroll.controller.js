@@ -10,7 +10,8 @@ import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
 // only; requests still waiting for a decision are shown separately.
 
 const TYPES = ["paid", "unpaid", "sick"];
-const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+// +12h: a date saved at UTC midnight or at Tbilisi midnight (20:00 UTC the day before) -> the same calendar day
+const dayKey = (d) => new Date(new Date(d).getTime() + 12 * 3600e3).toISOString().slice(0, 10);
 
 function daysOf(entry) {
   if (entry.days?.length) return entry.days.map((d) => ({ date: dayKey(d.date), type: d.type }));
@@ -55,8 +56,8 @@ export async function getLeavePayrollReport(req, res) {
       LeaveEntry.find(filter).select("employee type startDate endDate days status").lean(),
       RestDay.find({ date: { $gte: new Date(from.getTime() - 86400000), $lte: to } }).select("date").lean(),
     ]);
-    const restKeys = new Set(restDays.map((r) => dayKey(new Date(r.date.getTime() + 12 * 3600e3))));
-    const fromKey = dayKey(from), toKey = dayKey(to);
+    const restKeys = new Set(restDays.map((r) => dayKey(r.date)));
+    const fromKey = new Date(from).toISOString().slice(0, 10), toKey = new Date(to).toISOString().slice(0, 10);
 
     const byEmp = new Map();
     for (const e of entries) {
@@ -82,10 +83,12 @@ export async function getLeavePayrollReport(req, res) {
     // people with no "group" set on their profile but listed as a member of a group
     const memberSection = new Map();
     groups.forEach((g) => (g.members || []).forEach((m) => { if (g.section && !memberSection.has(String(m))) memberSection.set(String(m), String(g.section)); }));
-    const sections = await Section.find({}).select("name head").lean();
+    const sections = await Section.find({}).select("name head groups").lean();
     const sectionById = new Map(sections.map((s) => [String(s._id), s]));
     const sectionByHead = new Map(sections.filter((s) => s.head).map((s) => [String(s.head), s]));
-    const groupSection = new Map(groups.map((g) => [String(g._id), g.section ? String(g.section) : null]));
+    const sectionOfGroup = new Map();
+    sections.forEach((s) => (s.groups || []).forEach((g) => sectionOfGroup.set(String(g), String(s._id))));
+    const groupSection = new Map(groups.map((g) => [String(g._id), g.section ? String(g.section) : sectionOfGroup.get(String(g._id)) || null]));
 
     const divisions = new Map();
     for (const emp of employees) {

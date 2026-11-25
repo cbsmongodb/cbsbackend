@@ -21,8 +21,10 @@ export async function allowedDivisionIds(employee) {
   const ids = scope.map(String);
   const mine = new Set();
   const emps = await Employee.find({ _id: { $in: ids } }).select("group").lean();
-  const groups = await Group.find({ _id: { $in: emps.map((e) => e.group).filter(Boolean) } }).select("section").lean();
+  const groups = await Group.find({ $or: [{ _id: { $in: emps.map((e) => e.group).filter(Boolean) } }, { head: { $in: ids } }] }).select("section").lean();
   groups.forEach((g) => g.section && mine.add(String(g.section)));
+  // groups linked to a division only from the Division page
+  (await Section.find({ groups: { $in: groups.map((g) => g._id) } }).select("_id").lean()).forEach((s) => mine.add(String(s._id)));
   const headed = await Section.find({ head: { $in: ids } }).select("_id").lean();
   headed.forEach((s) => mine.add(String(s._id)));
   return mine;

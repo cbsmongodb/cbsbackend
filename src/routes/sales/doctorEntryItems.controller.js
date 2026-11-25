@@ -589,7 +589,8 @@ export async function getListingPage(req, res) {
     const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 50));
 
-    const filter = { period: periodDate };
+    // "the 1st" saved at UTC or Tbilisi midnight -> both
+    const filter = { period: { $gte: new Date(periodDate.getTime() - 12 * 3600e3), $lt: new Date(periodDate.getTime() + 12 * 3600e3) } };
     if (oid(employee)) {
       const scopeIds = await getScopeEmployeeIds(req.employee);
       if (scopeIds && !scopeIds.some((id) => String(id) === String(employee))) {
