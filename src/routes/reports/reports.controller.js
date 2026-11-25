@@ -15,7 +15,8 @@ export async function getEfficiencyReport(req, res) {
   try {
     const { from, to, employee, hospital } = req.query;
 
-    const planFilter = {};
+    // finished visits only — planned / cancelled / "arrived but not left" are not counted
+    const planFilter = { status: { $in: ["completed", "i_left"] } };
     if (from || to) {
       planFilter.period = {};
       if (from) planFilter.period.$gte = dayStart(from);
@@ -117,7 +118,7 @@ export async function getReimbursementReport(req, res) {
     const { from, to, employee } = req.query;
 
     // only hospital visits can be reimbursed (pharmacy-only plans have no region)
-    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null } };
+    const filter = { status: { $in: ["completed", "i_left"] }, hospital: { $ne: null } };
     if (from || to) {
       filter.period = {};
       if (from) filter.period.$gte = dayStart(from);
@@ -191,7 +192,7 @@ export async function exportReimbursementReport(req, res) {
     const { from, to, employee } = req.query;
 
     // only hospital visits can be reimbursed (pharmacy-only plans have no region)
-    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null } };
+    const filter = { status: { $in: ["completed", "i_left"] }, hospital: { $ne: null } };
     if (from || to) {
       filter.period = {};
       if (from) filter.period.$gte = dayStart(from);
@@ -369,7 +370,7 @@ export async function getAttendanceReport(req, res) {
 // ?section=&group=&employee=&mode=month|range&month=YYYY-MM&from=&to=&page=&limit=
 //
 // One row per employee:
-//   visits          = finished visits (status i_went / i_left / completed — same as every other report)
+//   visits          = finished visits only (completed / i_left) — not planned, cancelled or still "arrived"
 //   doctorsVisited  = different doctors seen on those visits
 //   totalPaidAmount = what was paid to doctors (active budgets, by budget date)
 // month mode only (these are stored per month):
@@ -377,7 +378,7 @@ export async function getAttendanceReport(req, res) {
 //   targetAmount            = the employee's plan × drug price              (Employee plans)
 //   salesAmount             = the employee's pharmacy sales × drug price    (Employee sales)
 //   fulfillment             = salesAmount ÷ targetAmount
-const DONE_VISIT = ["i_went", "i_left", "completed"];
+const DONE_VISIT = ["completed", "i_left"];
 const SP_H12 = 12 * 3600e3;
 const spR2 = (n) => Math.round((n || 0) * 100) / 100;
 

@@ -26,7 +26,7 @@ export async function computeMonthAmounts(year, month) {
   const to = new Date(+new Date(`${ny}-${pad(nm)}-01T00:00:00+04:00`) - 1);
 
   const plans = await PlanConfiguration.find({
-    status: { $in: ["i_went", "i_left", "completed"] },
+    status: { $in: ["completed", "i_left"] },
     hospital: { $ne: null },
     period: { $gte: from, $lte: to },
   })

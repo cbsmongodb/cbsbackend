@@ -94,7 +94,7 @@ export async function exportExpensesWorkbook(req, res) {
     if (!isDay(from) || !isDay(to) || from > to) return res.status(400).json({ error: "from / to dates are required" });
 
     // the same filter as the Reimbursement report on screen
-    const filter = { status: { $in: ["i_went", "i_left", "completed"] }, hospital: { $ne: null }, period: { $gte: dayStart(from), $lte: dayEnd(to) } };
+    const filter = { status: { $in: ["completed", "i_left"] }, hospital: { $ne: null }, period: { $gte: dayStart(from), $lte: dayEnd(to) } };
     let ids = null; // null = everyone
     const scope = await getScopeEmployeeIds(req.employee);
     if (scope) ids = scope.map(String);
