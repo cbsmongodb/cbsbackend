@@ -232,7 +232,7 @@ async function batchVisits(docs) {
 // new entries for that employee + doctor.
 // ---------------------------------------------------------------------------
 const H12 = 12 * 3600 * 1000;
-const VISITED = ["i_went", "i_left", "completed"];
+const VISITED = ["completed", "i_left"]; // finished visits only (checked in AND out)
 const ymOf = (d) => {
   const m = monthOfDate(d);
   return `${m.y}-${m.m}`;
