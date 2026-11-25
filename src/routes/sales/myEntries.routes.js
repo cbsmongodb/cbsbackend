@@ -21,6 +21,13 @@ import { moveEntries } from "../../utils/moveEntries.js";
 
 const router = express.Router();
 
+// the bonus of each line is shown only to group / division managers (and admin / director)
+function rowFields(req) {
+  const r = (req.employee?.role?.name || "").toLowerCase().trim();
+  const manager = /(group|division) manager/.test(r) || ["admin", "director"].includes(r);
+  return "employee doctor drug hospital quota prescription updatedAt" + (manager ? " budget" : "");
+}
+
 const isAdmin = (e) => (e?.role?.name || "").toLowerCase() === "admin";
 function can(e, action) {
   if (isAdmin(e)) return true;
@@ -82,7 +89,7 @@ router.get("/", async (req, res) => {
     }
     if (req.query.page) return pagedList(req, res, { employee, period });
     const items = await DoctorEntryItem.find({ employee, period })
-      .select("employee doctor drug hospital quota prescription updatedAt")
+      .select(rowFields(req))
       .populate("employee", "firstName lastName")
       .populate("doctor", "firstName lastName")
       .populate("drug", "name")
@@ -142,7 +149,7 @@ async function pagedList(req, res, { employee, period }) {
   const keys = (agg?.page || []).map((p) => p._id);
   const items = keys.length
     ? await DoctorEntryItem.find({ ...match, $or: keys.map((k) => ({ employee: k.e, doctor: k.d })) })
-        .select("employee doctor drug hospital quota prescription updatedAt")
+        .select(rowFields(req))
         .populate("employee", "firstName lastName")
         .populate("doctor", "firstName lastName")
         .populate("drug", "name")
