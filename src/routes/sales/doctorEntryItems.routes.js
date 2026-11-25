@@ -13,6 +13,7 @@ import {
   getBudgetSums,
   getListingPage,
   getListingFilters,
+  getBonusTable,
 } from "./doctorEntryItems.controller.js";
 import { requireAuth } from "../../middleware/auth.js";
 
@@ -20,6 +21,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get("/", getListing);
+router.get("/bonus-table", getBonusTable);
 router.get("/page", getListingPage);
 router.get("/filters", getListingFilters);
 router.get("/snapshot", getDoctorSnapshot);

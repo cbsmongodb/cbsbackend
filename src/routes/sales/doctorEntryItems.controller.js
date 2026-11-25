@@ -682,3 +682,58 @@ export async function getListingPage(req, res) {
     res.status(500).json({ error: "Server error" });
   }
 }
+
+// ================= bonus table for managers (read only) =================
+// GET /api/doctor-entry-items/bonus-table?month=YYYY-MM
+// every drug of the manager's division: Tbilisi + region bonus of the month, and doctor-specific bonuses.
+// Only group / division managers (and the roles that see everything).
+export async function getBonusTable(req, res) {
+  try {
+    const { seesEverything, getVisibleDrugIds } = await import("../../utils/groupVisibility.js");
+    const { monthWindow, hasDefault, DEFAULT_BONUS } = await import("../../utils/bonuses.js");
+    const { default: DrugBonusM } = await import("../../models/DrugBonus.js");
+    const { default: DoctorDrugBonusM } = await import("../../models/DoctorDrugBonus.js");
+    const { default: DoctorM } = await import("../../models/Doctor.js");
+    const role = (req.employee?.role?.name || "").toLowerCase().trim();
+    const all = role === "admin" || seesEverything(req.employee);
+    if (!all && !/(group|division) manager/.test(role)) return res.status(403).json({ error: "Not allowed" });
+
+    const month = parseMonth(/^\d{4}-\d{2}$/.test(req.query.month || "") ? req.query.month : new Date());
+    const drugFilter = { isActive: { $ne: false } };
+    if (!all) drugFilter._id = { $in: await getVisibleDrugIds(req.employee) };
+    const drugs = await Drug.find(drugFilter).select("name price bonus").sort({ name: 1 }).lean();
+    const ids = drugs.map((d) => d._id);
+    const [monthly, perDoctor] = await Promise.all([
+      DrugBonusM.find({ drug: { $in: ids }, period: monthWindow(month) }).select("drug value regionValue").lean(),
+      DoctorDrugBonusM.find({ drug: { $in: ids }, period: monthWindow(month) }).select("drug doctor value regionValue").lean(),
+    ]);
+    const own = new Map(monthly.map((b) => [String(b.drug), b]));
+    const docs = new Map((await DoctorM.find({ _id: { $in: perDoctor.map((x) => x.doctor) } }).select("firstName lastName uniqueNumber").lean()).map((d) => [String(d._id), d]));
+    const byDrug = new Map();
+    perDoctor.forEach((x) => {
+      const d = docs.get(String(x.doctor));
+      if (!d) return;
+      const k = String(x.drug);
+      if (!byDrug.has(k)) byDrug.set(k, []);
+      byDrug.get(k).push({ doctor: `${d.firstName || ""} ${d.lastName || ""}`.trim(), uniqueNumber: d.uniqueNumber || "", tbilisi: x.value, region: x.regionValue ?? x.value });
+    });
+    res.json({
+      month: `${month.y}-${String(month.m + 1).padStart(2, "0")}`,
+      drugs: drugs.map((d) => {
+        const b = own.get(String(d._id));
+        const tbilisi = b ? b.value : d.bonus > 0 ? d.bonus : hasDefault(month) ? DEFAULT_BONUS : 0;
+        return {
+          _id: d._id,
+          name: d.name,
+          price: d.price || 0,
+          tbilisi,
+          region: b && b.regionValue != null ? b.regionValue : tbilisi,
+          doctors: (byDrug.get(String(d._id)) || []).sort((a, z) => a.doctor.localeCompare(z.doctor)),
+        };
+      }),
+    });
+  } catch (err) {
+    console.error("getBonusTable failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
