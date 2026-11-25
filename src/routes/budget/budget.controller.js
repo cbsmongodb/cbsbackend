@@ -278,11 +278,7 @@ export async function computeBudgetAmounts(req, res) {
       const win = monthWindow(parseMonth(date));
       let lines = await DoctorEntryItem.find({ employee, doctor, period: win })
         .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
-      const own = lines.length > 0; // false = lines entered by other reps for this doctor
-      if (!lines.length) {
-        lines = await DoctorEntryItem.find({ doctor, period: win })
-          .select("drug quota prescription sale coefficient budget totalBudget").populate("drug", "price").lean();
-      }
+      const own = true; // only the chosen rep's own lines — never another rep's
       if (lines.length) {
         let rx = 0, sales = 0, pay = 0, target = 0, rxBoxes = 0, planBoxes = 0;
         for (const it of lines) {
