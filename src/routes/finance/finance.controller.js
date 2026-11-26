@@ -25,12 +25,18 @@ async function pharmacySalesAmount(y, m, scope, prices) {
   const [from, to] = georgianMonth(y, m);
   const filter = { date: { $gte: new Date(from.getTime() - 12 * 3600e3), $lt: new Date(to.getTime() - 12 * 3600e3) } };
   if (scope) filter.employee = { $in: scope };
-  const sales = await EmployeeSale.find(filter).select("_id").lean();
+  const sales = await EmployeeSale.find(filter).select("_id correctedAmount").lean();
   if (!sales.length) return { amount: 0, boxes: 0 };
   const lines = await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
-    .select("drug totalNoOfBoxes").lean();
+    .select("drug totalNoOfBoxes medicineTargatableId").lean();
+  // corrected sales count with the corrected amount (finance / division manager correction)
+  const corrected = new Map(sales.filter((s) => s.correctedAmount != null).map((s) => [String(s._id), s.correctedAmount]));
   let amount = 0, boxes = 0;
-  lines.forEach((l) => { boxes += l.totalNoOfBoxes || 0; amount += (l.totalNoOfBoxes || 0) * (prices.get(String(l.drug)) || 0); });
+  lines.forEach((l) => {
+    boxes += l.totalNoOfBoxes || 0;
+    if (!corrected.has(String(l.medicineTargatableId))) amount += (l.totalNoOfBoxes || 0) * (prices.get(String(l.drug)) || 0);
+  });
+  corrected.forEach((v) => { amount += v; });
   return { amount: r2(amount), boxes: r2(boxes) };
 }
 
@@ -204,7 +210,7 @@ export async function getFinanceDetails(req, res) {
       const [from, to] = georgianMonth(y, m);
       const filter = { date: { $gte: new Date(from.getTime() - 12 * 3600e3), $lt: new Date(to.getTime() - 12 * 3600e3) } };
       if (scope) filter.employee = { $in: scope };
-      const sales = await EmployeeSale.find(filter).select("_id employee date").populate("employee", "firstName lastName").lean();
+      const sales = await EmployeeSale.find(filter).select("_id employee date correctedAmount").populate("employee", "firstName lastName").lean();
       const lines = sales.length
         ? await MedicineTarget.find({ medicineTargatableType: "EmployeeSale", medicineTargatableId: { $in: sales.map((s) => s._id) } })
             .select("drug totalNoOfBoxes medicineTargatableId").lean()
@@ -227,6 +233,18 @@ export async function getFinanceDetails(req, res) {
       if (noDrug) checks.push({ level: "error", text: `${noDrug} ხაზი წაშლილ წამალზეა მიბმული — თანხაში არ ითვლება.` });
       if (empty) checks.push({ level: "warn", text: `${empty} გაყიდვის ჩანაწერი ცარიელია (წამლები არ აქვს).` });
       const rows = [...byDrug.values()].map((r) => ({ ...r, boxes: r2(r.boxes), amount: r2(r.amount) })).sort((a, b) => b.amount - a.amount);
+      // corrections: (corrected - original) of every corrected sale, as one extra line
+      const corr = sales.filter((s) => s.correctedAmount != null);
+      if (corr.length) {
+        let diff = 0;
+        corr.forEach((s) => {
+          const orig = lines.filter((l) => String(l.medicineTargatableId) === String(s._id))
+            .reduce((a, l) => a + (l.totalNoOfBoxes || 0) * (drugById.get(String(l.drug))?.price || 0), 0);
+          diff += s.correctedAmount - orig;
+        });
+        rows.push({ drug: `✎ კორექტირება (${corr.length} გაყიდვა)`, boxes: 0, price: 0, amount: r2(diff) });
+        checks.push({ level: "info", text: `${corr.length} გაყიდვის თანხა დაკორექტირებულია — ჯამში ${r2(diff)} ₾ (თანამშრომლის გაყიდვების გვერდი).` });
+      }
       return res.json({
         card,
         source: "Employee Sales გვერდზე ატვირთული აფთიაქების გაყიდვები ამ თვისთვის (ყველა თანამშრომელი).",

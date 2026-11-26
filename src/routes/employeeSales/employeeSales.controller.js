@@ -137,6 +137,7 @@ export async function getAllEmployeeSales(req, res) {
     const [docs, total] = await Promise.all([
       EmployeeSale.find(filter)
         .populate("employee", "firstName lastName")
+        .populate("correctedBy", "firstName lastName")
         .sort({ date: 1 })
         .skip(skip)
         .limit(limitNum).lean(),
@@ -164,10 +165,15 @@ export async function getAllEmployeeSales(req, res) {
       employeeName: d.employee?.name || "—",
       saleAmount: Math.round((amountBySale.get(String(d._id)) || 0) * 100) / 100,
       saleBoxes: boxesBySale.get(String(d._id)) || 0,
+      correctedAmount: d.correctedAmount ?? null,
+      correctionNote: d.correctionNote || "",
+      correctedByName: d.correctedBy ? `${d.correctedBy.firstName || ""} ${d.correctedBy.lastName || ""}`.trim() : "",
+      correctedAt: d.correctedAt || null,
     }));
 
     res.json({
       docs: rows,
+      canCorrect: canCorrectSales(req.employee),
       total,
       page: pageNum,
       pages: Math.max(Math.ceil(total / limitNum), 1),
@@ -356,6 +362,36 @@ export async function getSaleFilters(req, res) {
     });
   } catch (err) {
     console.error("getSaleFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// PUT /api/employee-sales/:id/correction  { amount, note }
+// Division managers and finance correct the amount of a pharmacy sale (e.g. an overstated one).
+// The original amount (boxes × price) stays as it is; the corrected one is shown next to it and
+// used by the finance dashboard. Empty amount -> the correction is removed.
+const CORRECTORS = new Set(["admin", "director", "finance manager", "accountant's assistant"]);
+export function canCorrectSales(me) {
+  const r = (me?.role?.name || "").toLowerCase().trim();
+  return CORRECTORS.has(r) || /division manager/.test(r);
+}
+export async function correctEmployeeSale(req, res) {
+  try {
+    if (!canCorrectSales(req.employee)) return res.status(403).json({ error: "თანხის კორექტირება მხოლოდ დივიზიონის მენეჯერს და ფინანსებს შეუძლიათ" });
+    const sale = await EmployeeSale.findById(req.params.id).select("employee").lean();
+    if (!sale) return res.status(404).json({ error: "Not found" });
+    if (!(await canSeeEmployee(req.employee, sale.employee))) return res.status(403).json(FORBIDDEN);
+    const raw = req.body?.amount;
+    const empty = raw === null || raw === undefined || String(raw).trim() === "";
+    const amount = empty ? null : Math.round(Number(String(raw).replace(/\s/g, "").replace(",", ".")) * 100) / 100;
+    if (!empty && (!Number.isFinite(amount) || amount < 0)) return res.status(400).json({ error: "თანხა უნდა იყოს 0 ან მეტი რიცხვი" });
+    const set = empty
+      ? { correctedAmount: null, correctionNote: "", correctedBy: null, correctedAt: null }
+      : { correctedAmount: amount, correctionNote: String(req.body?.note || "").slice(0, 300), correctedBy: req.employee._id, correctedAt: new Date() };
+    await EmployeeSale.updateOne({ _id: req.params.id }, { $set: set });
+    res.json({ _id: req.params.id, ...set, correctedByName: empty ? "" : `${req.employee.firstName || ""} ${req.employee.lastName || ""}`.trim() });
+  } catch (err) {
+    console.error("correctEmployeeSale failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }

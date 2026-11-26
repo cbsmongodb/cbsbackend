@@ -8,6 +8,7 @@ import {
   getEmployeeSaleById,
   updateEmployeeSale,
   getSaleEmployees,
+  correctEmployeeSale,
   getSaleFilters,
 } from "./employeeSales.controller.js";
 
@@ -20,6 +21,7 @@ router.get("/employees", getSaleEmployees);
 router.get("/filters", getSaleFilters);
 router.post("/", createEmployeeSale);
 router.get("/:id", getEmployeeSaleById);
+router.put("/:id/correction", correctEmployeeSale);
 router.put("/:id", updateEmployeeSale);
 router.delete("/:id", deleteEmployeeSale);
 
