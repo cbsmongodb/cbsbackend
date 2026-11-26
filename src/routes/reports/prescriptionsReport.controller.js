@@ -3,6 +3,7 @@ import EmployeeSale from "../../models/EmployeeSale.js";
 import MedicineTarget from "../../models/MedicineTarget.js";
 import CoefficientOverride from "../../models/CoefficientOverride.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { peopleOf, filtersFor, narrowTo } from "../../utils/divisionFilters.js";
 
 // GET /api/reports/prescriptions?from=YYYY-MM&to=YYYY-MM&employee=
 // Every Data Entry line with a prescription (> 0): who, which doctor, hospital,
@@ -54,6 +55,9 @@ export async function getPrescriptionsReport(req, res) {
         filter.employee = { $in: scopeIds };
       }
     }
+    // division / group filter
+    const only = ownOnly ? null : await peopleOf(req.query.section, req.query.group);
+    if (only) filter.employee = narrowTo(filter.employee, only);
 
     const items = await DoctorEntryItem.find(filter)
       .populate("employee", "firstName lastName")
@@ -118,6 +122,17 @@ export async function getPrescriptionsReport(req, res) {
     );
   } catch (err) {
     console.error("getPrescriptionsReport failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/reports/prescriptions/filters -> divisions / groups this user may see
+export async function getPrescriptionsFilters(req, res) {
+  try {
+    if ((req.employee?.role?.name || "").toLowerCase().trim() === "representative") return res.json({ sections: [], groups: [] });
+    res.json(await filtersFor(await getScopeEmployeeIds(req.employee)));
+  } catch (err) {
+    console.error("getPrescriptionsFilters failed:", err);
     res.status(500).json({ error: "Server error" });
   }
 }
