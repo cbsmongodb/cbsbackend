@@ -7,6 +7,7 @@ import {
   getVisibleDrugsForTarget,
   getEmployeeTargetById,
   updateEmployeeTarget,
+  getTargetFilters,
 } from "./employeeTargets.controller.js";
 
 const router = express.Router();
@@ -15,6 +16,7 @@ router.use(requireAuth);
 // static routes first
 router.get("/", getAllEmployeeTargets);
 router.get("/visible-drugs", getVisibleDrugsForTarget);
+router.get("/filters", getTargetFilters);
 router.post("/", createEmployeeTarget);
 
 // param routes last

@@ -47,6 +47,15 @@ export async function getAllEmployeeTargets(req, res) {
       filter.employee = filter.employee || { $in: matchingEmployees };
     }
 
+    // division / group filter (?section= / ?group=)
+    const only = await peopleOf(req.query.section, req.query.group);
+    if (only) {
+      const set = new Set(only);
+      if (filter.employee && typeof filter.employee !== "object") { if (!set.has(String(filter.employee))) filter.employee = { $in: [] }; }
+      else if (filter.employee?.$in) filter.employee = { $in: filter.employee.$in.filter((id) => set.has(String(id))) };
+      else filter.employee = { $in: only };
+    }
+
     // scope: managers see only their people's targets
     const scope = await getScopeEmployeeIds(req.employee);
     if (scope) {
@@ -247,5 +256,67 @@ export async function updateEmployeeTarget(req, res) {
   } catch (err) {
     console.error("updateEmployeeTarget failed:", err);
     res.status(500).json({ error: err.message || "Server error" });
+  }
+}
+
+// ---- division / group filter (Employee plans page) ----
+const okId = (v) => /^[a-f0-9]{24}$/i.test(String(v || ""));
+// employees of one group, or of every group of a division (+ the division head)
+async function peopleOf(section, group) {
+  const { default: Group } = await import("../../models/Group.js");
+  const { default: Section } = await import("../../models/Section.js");
+  let groupIds = [];
+  let head = null;
+  if (okId(group)) groupIds = [String(group)];
+  else if (okId(section)) {
+    const sec = await Section.findById(section).select("groups head").lean();
+    const linked = await Group.find({ section }).distinct("_id");
+    groupIds = [...new Set([...(sec?.groups || []).map(String), ...linked.map(String)])];
+    head = sec?.head ? String(sec.head) : null;
+  } else return null;
+  const ids = new Set(head ? [head] : []);
+  (await Employee.find({ group: { $in: groupIds } }).distinct("_id")).forEach((id) => ids.add(String(id)));
+  (await Group.find({ _id: { $in: groupIds } }).select("head members").lean()).forEach((g) => {
+    if (g.head) ids.add(String(g.head));
+    (g.members || []).forEach((m) => ids.add(String(m)));
+  });
+  return [...ids];
+}
+
+// GET /api/employee-targets/filters -> the divisions / groups (and who is in each) this user may see
+export async function getTargetFilters(req, res) {
+  try {
+    const { default: Group } = await import("../../models/Group.js");
+    const { default: Section } = await import("../../models/Section.js");
+    const scope = await getScopeEmployeeIds(req.employee);
+    const allowed = scope ? new Set(scope.map(String)) : null;
+    const [sections, groups, people] = await Promise.all([
+      Section.find().select("name groups head").sort({ name: 1 }).lean(),
+      Group.find().select("name section head members").sort({ name: 1 }).lean(),
+      Employee.find(allowed ? { _id: { $in: [...allowed] } } : {}).select("group").lean(),
+    ]);
+    const sectionOf = new Map();
+    sections.forEach((s) => (s.groups || []).forEach((g) => sectionOf.set(String(g), String(s._id))));
+    const byGroup = new Map();
+    const add = (g, e) => {
+      if (!g || !e || (allowed && !allowed.has(String(e)))) return;
+      if (!byGroup.has(String(g))) byGroup.set(String(g), new Set());
+      byGroup.get(String(g)).add(String(e));
+    };
+    people.forEach((p) => add(p.group, p._id));
+    groups.forEach((g) => { add(g._id, g.head); (g.members || []).forEach((m) => add(g._id, m)); });
+    const outGroups = groups.filter((g) => byGroup.has(String(g._id))).map((g) => ({
+      id: String(g._id), name: g.name,
+      section: g.section ? String(g.section) : sectionOf.get(String(g._id)) || null,
+      employees: [...byGroup.get(String(g._id))],
+    }));
+    const used = new Set(outGroups.map((g) => g.section).filter(Boolean));
+    res.json({
+      sections: sections.filter((s) => used.has(String(s._id))).map((s) => ({ id: String(s._id), name: s.name, head: s.head ? String(s.head) : null })),
+      groups: outGroups,
+    });
+  } catch (err) {
+    console.error("getTargetFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
   }
 }
