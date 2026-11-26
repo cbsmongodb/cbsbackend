@@ -8,6 +8,7 @@ import {
   getEmployeeSaleById,
   updateEmployeeSale,
   getSaleEmployees,
+  getSaleFilters,
 } from "./employeeSales.controller.js";
 
 const router = express.Router();
@@ -16,6 +17,7 @@ router.use(requireAuth);
 router.get("/", getAllEmployeeSales);
 router.get("/visible-drugs", getVisibleDrugsForSale);
 router.get("/employees", getSaleEmployees);
+router.get("/filters", getSaleFilters);
 router.post("/", createEmployeeSale);
 router.get("/:id", getEmployeeSaleById);
 router.put("/:id", updateEmployeeSale);
