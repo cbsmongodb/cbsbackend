@@ -8,6 +8,7 @@ import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { getVisibleDrugIds, getVisibleGroups, seesEverything } from "../../utils/groupVisibility.js";
 import Group from "../../models/Group.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { importOnly } from "../../utils/importAccess.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -121,7 +122,7 @@ router.get(
   )
 );
 
-router.post("/bulk-import", async (req, res) => {
+router.post("/bulk-import", importOnly, async (req, res) => {
   try {
     const { rows } = req.body;
     if (!Array.isArray(rows) || rows.length === 0) {

@@ -7,6 +7,7 @@ import PlanConfiguration from "../../models/PlanConfiguration.js";
 import Address from "../../models/Address.js";
 import { crud, exportExcel } from "../../utils/crudFactory.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { importOnly } from "../../utils/importAccess.js";
 import { geocodeAddress, searchAddress } from "../../utils/geocode.js";
 import { findRepLocationFixes, applyRepLocations, undoRepLocations } from "../../utils/repLocations.js";
 
@@ -36,7 +37,7 @@ export default function hospitalsRoutes(io) {
   // hospitals with no lat/lng yet — most-visited first, so the developer
   // pins the ones reps actually go to. For each one we also suggest a point:
   // the median of the reps' own GPS at check-in / check-out there.
-  router.get("/missing-coordinates", async (req, res) => {
+  router.get("/missing-coordinates", importOnly, async (req, res) => {
     try {
       const hospitals = await Hospital.find({
         $or: [
@@ -156,7 +157,7 @@ export default function hospitalsRoutes(io) {
     }
   });
 
-  router.post("/bulk-import", async (req, res) => {
+  router.post("/bulk-import", importOnly, async (req, res) => {
     try {
       const { rows } = req.body;
       if (!Array.isArray(rows) || rows.length === 0) {
@@ -216,7 +217,7 @@ export default function hospitalsRoutes(io) {
     }
   });
 
-  router.post("/geocode-missing", async (req, res) => {
+  router.post("/geocode-missing", importOnly, async (req, res) => {
     try {
       const hospitals = await Hospital.find({
         address: { $exists: true, $ne: "" },

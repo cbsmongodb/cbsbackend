@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import Employee from "../../models/Employee.js";
+import { canImport } from "../../utils/importAccess.js";
 
 
 function signToken(employee) {
@@ -47,7 +48,7 @@ export async function login(req, res) {
 // them. This lives under admin/employees, not here; this endpoint just
 // returns whoever the current token belongs to.
 export async function me(req, res) {
-  res.json(req.employee);
+  res.json({ ...req.employee, canImport: canImport(req.employee) });
 }
 
 export async function logout(req, res) {
