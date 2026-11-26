@@ -10,6 +10,17 @@ import DoctorEntryItem from "../../models/DoctorEntryItem.js";
 import { sendAsExcel } from "../../utils/excel.js";
 import { getReimbursementOrderIndex } from "../../utils/reimbursementOrder.js";
 import { getScopeEmployeeIds } from "../../utils/groupVisibility.js";
+import { peopleOf, filtersFor, narrowTo } from "../../utils/divisionFilters.js";
+
+// GET /api/reports/efficiency/filters -> divisions / groups this user may see
+export async function getEfficiencyFilters(req, res) {
+  try {
+    res.json(await filtersFor(await getScopeEmployeeIds(req.employee)));
+  } catch (err) {
+    console.error("getEfficiencyFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
 
 export async function getEfficiencyReport(req, res) {
   try {
@@ -27,6 +38,9 @@ export async function getEfficiencyReport(req, res) {
     }
     if (employee) planFilter.performer = employee;
     if (hospital) planFilter.hospital = hospital;
+    // division / group filter
+    const only = await peopleOf(req.query.section, req.query.group);
+    if (only) planFilter.performer = narrowTo(planFilter.performer, only);
 
     const effScope = await getScopeEmployeeIds(req.employee);
     if (effScope) {
