@@ -183,7 +183,7 @@ export async function getBudgetAllotment(req, res) {
     // independent queries -> all at the same time
     const [docs, employee, entries, chartData] = await Promise.all([
       Budget.find(filter)
-        .select("date doctor paidAmount advanceAmount salesAmount targetAmount prescriptionAmt isActive")
+        .select("date doctor paidAmount payableAmt advanceAmount salesAmount targetAmount prescriptionAmt isActive")
         .populate("doctor", "firstName lastName uniqueNumber")
         .sort({ date: -1 })
         .lean(),
@@ -226,6 +226,27 @@ export async function getBudgetAllotment(req, res) {
     const totalSalesAmount = await boxesAmount(EmployeeSale, "EmployeeSale");
     const totalTargetAmount = await boxesAmount(EmployeeTarget, "EmployeeTarget");
 
+    // allotBalance: the doctor's balance after this budget —
+    // everything paid − everything accrued (payable) for this doctor + employee,
+    // from October 2026 up to this budget's date. Negative = we owe the doctor.
+    const BAL_FROM = new Date(Date.UTC(2026, 9, 1) - 4 * 3600e3); // 1 Oct 2026, Tbilisi
+    const doctorIds = [...new Set(docs.map((d) => String(d.doctor?._id || d.doctor || "")).filter(Boolean))];
+    const history = doctorIds.length
+      ? await Budget.find({ employee: employeeId, doctor: { $in: doctorIds }, isActive: { $ne: false }, date: { $gte: BAL_FROM, $lte: endDate } })
+          .select("doctor date paidAmount payableAmt").lean()
+      : [];
+    const balanceOf = (d) => {
+      const own = (d.paidAmount || 0) - (d.payableAmt || 0);
+      if (!d.date || new Date(d.date) < BAL_FROM) return Math.round(own * 100) / 100;
+      const doc = String(d.doctor?._id || d.doctor || "");
+      const upTo = new Date(d.date).getTime();
+      const sum = history
+        .filter((h) => String(h.doctor) === doc && new Date(h.date).getTime() <= upTo)
+        .reduce((s, h) => s + (h.paidAmount || 0) - (h.payableAmt || 0), 0);
+      // a deleted budget isn't in the history — show its own effect on top
+      return Math.round((d.isActive === false ? sum + own : sum) * 100) / 100;
+    };
+
     res.json({
       employeeName: employee?.name || "—",
       totalPaidAmount,
@@ -239,6 +260,8 @@ export async function getBudgetAllotment(req, res) {
         doctorName: d.doctor?.name || "—",
         doctorUniqueNumber: d.doctor?.uniqueNumber || "—",
         paidAmount: d.paidAmount,
+        payableAmt: d.payableAmt,
+        balance: balanceOf(d),
         advanceAmount: d.advanceAmount,
         salesAmount: d.salesAmount,
         deltaAmount: d.advanceAmount,
