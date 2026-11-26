@@ -147,128 +147,115 @@ export async function deleteBudget(req, res) {
   }
 }
 
-// GET /api/budgets/allotment?employee_id=&start_date=&end_date=
-// Rails' budget_allotment — full page: 4 summary totals, per-doctor paid
-// chart, and the employee's raw Budget rows for the table. Defaults to
-// last month + the logged-in employee, matching Rails exactly.
+// GET /api/budgets/allotment/filters -> divisions / groups this user may see
+export async function getBudgetAllotmentFilters(req, res) {
+  try {
+    const { filtersFor } = await import("../../utils/divisionFilters.js");
+    res.json(await filtersFor(await getScopeEmployeeIds(req.employee)));
+  } catch (err) {
+    console.error("getBudgetAllotmentFilters failed:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
+// GET /api/budgets/allotment?month=YYYY-MM&section=&group=&employee_id=
+// allotmentMonth: one month, one employee / a group / a division / everyone.
+// Every line: paid to the doctor, the doctor's sales, the doctor's quota, the doctor's balance.
+// balance = everything paid − everything accrued (payable) for this doctor + employee,
+// from October 2026 up to this budget. Negative = we owe the doctor.
 export async function getBudgetAllotment(req, res) {
   try {
-    const employeeId = req.query.employee_id || String(req.employee._id);
+    const { peopleOf } = await import("../../utils/divisionFilters.js");
+    const scope = await getScopeEmployeeIds(req.employee); // null = sees everyone
+    const inScope = (id) => !scope || scope.some((s) => String(s) === String(id));
 
-    // only people this user may see (division / group managers -> their own people)
-    const scope = await getScopeEmployeeIds(req.employee);
-    if (scope && !scope.some((id) => String(id) === String(employeeId))) {
-      return res.status(403).json({ error: "Not allowed" });
+    // which month (Georgian calendar); default = last month
+    let month = String(req.query.month || "");
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      const now = new Date(Date.now() + 4 * 3600e3);
+      const lm = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      month = lm.toISOString().slice(0, 7);
+    }
+    const [y, m] = month.split("-").map(Number);
+    const startDate = new Date(Date.UTC(y, m - 1, 1) - 4 * 3600e3);
+    const endDate = new Date(Date.UTC(y, m, 1) - 4 * 3600e3 - 1);
+
+    // whose budgets
+    let people = null; // null = everyone this user may see
+    if (req.query.employee_id) {
+      if (!inScope(req.query.employee_id)) return res.status(403).json({ error: "Not allowed" });
+      people = [String(req.query.employee_id)];
+    } else {
+      const only = await peopleOf(req.query.section, req.query.group);
+      if (only) people = only.filter(inScope);
+      else if (scope) people = scope.map(String);
     }
 
-    // a picked date means that whole day in Georgia (UTC+4); default = last month
-    const day = (str, end) => (/^\d{4}-\d{2}-\d{2}$/.test(str)
-      ? new Date(`${str}T${end ? "23:59:59.999" : "00:00:00"}+04:00`)
-      : new Date(str));
-    const now = new Date();
-    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    const lmStr = lastMonth.toISOString().slice(0, 10);
-    const lmEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
-    const startDate = day(req.query.start_date || lmStr, false);
-    const endDate = day(req.query.end_date || lmEnd, true);
+    const filter = { date: { $gte: startDate, $lte: endDate } };
+    if (people) filter.employee = { $in: people };
 
-    const filter = { employee: employeeId, date: { $gte: startDate, $lte: endDate } };
+    const docs = await Budget.find(filter)
+      .select("date employee doctor paidAmount payableAmt salesAmount targetAmount isActive")
+      .populate("doctor", "firstName lastName uniqueNumber")
+      .populate("employee", "firstName lastName")
+      .sort({ date: -1 })
+      .lean();
 
-    // allotmentFromDataEntry: target / sales / prescriptions come from Data Entry
-    // (DoctorEntryItem, monthly) - the same numbers the reports and Data Entry page show
-    const sd = new Date(startDate.getTime() + 4 * 3600e3); // Georgian calendar date
-    // month records ("the 1st") are saved at UTC or Tbilisi midnight -> start 12h earlier to catch both
-    const monthFrom = new Date(Date.UTC(sd.getUTCFullYear(), sd.getUTCMonth(), 1) - 12 * 3600e3);
-
-    // independent queries -> all at the same time
-    const [docs, employee, entries, chartData] = await Promise.all([
-      Budget.find(filter)
-        .select("date doctor paidAmount payableAmt advanceAmount salesAmount targetAmount prescriptionAmt isActive")
-        .populate("doctor", "firstName lastName uniqueNumber")
-        .sort({ date: -1 })
-        .lean(),
-      Employee.findById(employeeId).select("firstName lastName").lean(),
-      DoctorEntryItem.find({ employee: employeeId, period: { $gte: monthFrom, $lte: endDate } })
-        .select("drug prescription sale quota")
-        .populate("drug", "price")
-        .lean(),
-      Budget.aggregate([
-        { $match: { ...filter, isActive: { $ne: false }, employee: new Budget.base.Types.ObjectId(String(employeeId)) } },
-        { $group: { _id: "$doctor", paidAmount: { $sum: "$paidAmount" } } },
-        { $lookup: { from: "doctors", localField: "_id", foreignField: "_id", as: "doctor" } },
-        { $unwind: { path: "$doctor", preserveNullAndEmptyArrays: true } },
-        {
-          $project: {
-            name: {
-              $ifNull: [{ $concat: ["$doctor.firstName", " ", "$doctor.lastName"] }, "Unknown Doctor"],
-            },
-            value: { $round: ["$paidAmount", 2] },
-          },
-        },
-      ]),
-    ]);
-
-    // deleted budgets are listed in the table but not counted
-    const totalPaidAmount = Math.round(docs.filter((d) => d.isActive !== false).reduce((s, d) => s + (d.paidAmount || 0), 0) * 100) / 100;
-    let totalPrescriptionAmount = 0;
-    entries.forEach((it) => { totalPrescriptionAmount += (it.prescription || 0) * (it.drug?.price || 0); });
-    // plan = "Employee plans", sales = "Employee sales" (pharmacy), boxes × price — the same as Staff performance
-    const { default: EmployeeSale } = await import("../../models/EmployeeSale.js");
-    const { default: EmployeeTarget } = await import("../../models/EmployeeTarget.js");
-    const { default: DrugModel } = await import("../../models/Drug.js");
-    const price = new Map((await DrugModel.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
-    const boxesAmount = async (Model, type) => {
-      const heads = await Model.find({ employee: employeeId, date: { $gte: monthFrom, $lte: endDate } }).select("_id").lean();
-      if (!heads.length) return 0;
-      const lines = await MedicineTarget.find({ medicineTargatableType: type, medicineTargatableId: { $in: heads.map((h) => h._id) } }).select("drug totalNoOfBoxes").lean();
-      return lines.reduce((s, l) => s + (l.totalNoOfBoxes || 0) * (price.get(String(l.drug)) || 0), 0);
-    };
-    const totalSalesAmount = await boxesAmount(EmployeeSale, "EmployeeSale");
-    const totalTargetAmount = await boxesAmount(EmployeeTarget, "EmployeeTarget");
-
-    // allotBalance: the doctor's balance after this budget —
-    // everything paid − everything accrued (payable) for this doctor + employee,
-    // from October 2026 up to this budget's date. Negative = we owe the doctor.
+    const idOf = (v) => String(v?._id || v || "");
     const BAL_FROM = new Date(Date.UTC(2026, 9, 1) - 4 * 3600e3); // 1 Oct 2026, Tbilisi
-    const doctorIds = [...new Set(docs.map((d) => String(d.doctor?._id || d.doctor || "")).filter(Boolean))];
-    const history = doctorIds.length
-      ? await Budget.find({ employee: employeeId, doctor: { $in: doctorIds }, isActive: { $ne: false }, date: { $gte: BAL_FROM, $lte: endDate } })
-          .select("doctor date paidAmount payableAmt").lean()
-      : [];
+    const pairKey = (e, d) => `${idOf(e)}|${idOf(d)}`;
+
+    // history of the same doctor + employee pairs, from October up to this month's end
+    const pairs = new Map();
+    if (endDate >= BAL_FROM && docs.length) {
+      const empIds = [...new Set(docs.map((d) => idOf(d.employee)).filter(Boolean))];
+      const docIds = [...new Set(docs.map((d) => idOf(d.doctor)).filter(Boolean))];
+      const history = await Budget.find({
+        employee: { $in: empIds }, doctor: { $in: docIds },
+        isActive: { $ne: false }, date: { $gte: BAL_FROM, $lte: endDate },
+      }).select("employee doctor date paidAmount payableAmt").lean();
+      history.forEach((h) => {
+        const k = pairKey(h.employee, h.doctor);
+        if (!pairs.has(k)) pairs.set(k, []);
+        pairs.get(k).push({ t: new Date(h.date).getTime(), v: (h.paidAmount || 0) - (h.payableAmt || 0) });
+      });
+    }
+    const r2 = (n) => Math.round((n || 0) * 100) / 100;
     const balanceOf = (d) => {
       const own = (d.paidAmount || 0) - (d.payableAmt || 0);
-      if (!d.date || new Date(d.date) < BAL_FROM) return Math.round(own * 100) / 100;
-      const doc = String(d.doctor?._id || d.doctor || "");
+      if (!d.date || new Date(d.date) < BAL_FROM) return r2(own);
       const upTo = new Date(d.date).getTime();
-      const sum = history
-        .filter((h) => String(h.doctor) === doc && new Date(h.date).getTime() <= upTo)
-        .reduce((s, h) => s + (h.paidAmount || 0) - (h.payableAmt || 0), 0);
-      // a deleted budget isn't in the history — show its own effect on top
-      return Math.round((d.isActive === false ? sum + own : sum) * 100) / 100;
+      const sum = (pairs.get(pairKey(d.employee, d.doctor)) || []).filter((h) => h.t <= upTo).reduce((s, h) => s + h.v, 0);
+      return r2(d.isActive === false ? sum + own : sum); // a deleted budget isn't in the history
     };
 
+    const rows = docs.map((d) => ({
+      _id: d._id,
+      date: d.date,
+      employeeName: d.employee ? `${d.employee.firstName || ""} ${d.employee.lastName || ""}`.trim() : "—",
+      doctorName: d.doctor?.name || (d.doctor ? `${d.doctor.firstName || ""} ${d.doctor.lastName || ""}`.trim() : "—"),
+      doctorUniqueNumber: d.doctor?.uniqueNumber || "—",
+      paidAmount: r2(d.paidAmount),
+      salesAmount: r2(d.salesAmount),
+      targetAmount: r2(d.targetAmount),
+      balance: balanceOf(d),
+      isActive: d.isActive !== false,
+      pair: pairKey(d.employee, d.doctor),
+    }));
+
+    // totals: active budgets only; balance = each doctor's balance at the month's end
+    const active = rows.filter((r) => r.isActive);
+    const lastBal = new Map();
+    [...active].sort((a, b) => new Date(a.date) - new Date(b.date)).forEach((r) => lastBal.set(r.pair, r.balance));
+    const sum = (k) => r2(active.reduce((s, r) => s + (r[k] || 0), 0));
+
     res.json({
-      employeeName: employee?.name || "—",
-      totalPaidAmount,
-      totalTargetAmount: Math.round(totalTargetAmount * 100) / 100,
-      totalSalesAmount: Math.round(totalSalesAmount * 100) / 100,
-      totalPrescriptionAmount: Math.round(totalPrescriptionAmount * 100) / 100,
-      chartData,
-      docs: docs.map((d) => ({
-        _id: d._id,
-        date: d.date,
-        doctorName: d.doctor?.name || "—",
-        doctorUniqueNumber: d.doctor?.uniqueNumber || "—",
-        paidAmount: d.paidAmount,
-        payableAmt: d.payableAmt,
-        balance: balanceOf(d),
-        advanceAmount: d.advanceAmount,
-        salesAmount: d.salesAmount,
-        deltaAmount: d.advanceAmount,
-        targetAmount: d.targetAmount,
-        prescriptionAmt: d.prescriptionAmt,
-        isActive: d.isActive,
-      })),
+      month,
+      totalPaidAmount: sum("paidAmount"),
+      totalSalesAmount: sum("salesAmount"),
+      totalTargetAmount: sum("targetAmount"),
+      totalBalance: r2([...lastBal.values()].reduce((s, v) => s + v, 0)),
+      docs: rows.map(({ pair, ...r }) => r),
     });
   } catch (err) {
     console.error("getBudgetAllotment failed:", err);
