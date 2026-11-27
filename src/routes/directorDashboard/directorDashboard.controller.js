@@ -58,8 +58,18 @@ export async function getProductSale(req, res) {
       { $group: { _id: { e: "$employee", d: "$l.drug" }, boxes: { $sum: "$l.totalNoOfBoxes" } } },
     ]).allowDiskUse(true);
 
-    const [saleRows, targetRows, rxRows] = await Promise.all([
-      lines(EmployeeSale, "EmployeeSale"),
+    // psCorrected: sale lines one by one, with the sale's correction
+    const saleLinesQ = EmployeeSale.aggregate([
+      { $match: { date: win, employee: { $in: empIds } } },
+      { $lookup: { from: MedicineTarget.collection.name, localField: "_id", foreignField: "medicineTargatableId", as: "l" } },
+      { $unwind: "$l" },
+      { $match: { "l.medicineTargatableType": "EmployeeSale" } },
+      { $project: { e: "$employee", s: "$_id", c: "$correctedAmount", d: "$l.drug", b: "$l.totalNoOfBoxes" } },
+    ]).allowDiskUse(true);
+    const allPrices = new Map((await Drug.find({}).select("price").lean()).map((d) => [String(d._id), d.price || 0]));
+
+    const [saleLines, targetRows, rxRows] = await Promise.all([
+      saleLinesQ,
       lines(EmployeeTarget, "EmployeeTarget"),
       DoctorEntryItem.aggregate([
         { $match: { period: win, employee: { $in: empIds }, drug: { $in: drugIds } } },
@@ -71,27 +81,50 @@ export async function getProductSale(req, res) {
     const row = (id) => {
       const d = drugById.get(String(id));
       if (!byDrug.has(String(id))) byDrug.set(String(id), {
-        drugName: d.name, openingStocks: d.stocks || 0, monthlyTarget: 0, saleBoxes: 0, prescriptions: 0, totalSaleAmount: 0,
+        drugName: d.name, price: d.price || 0, openingStocks: d.stocks || 0, monthlyTarget: 0, saleBoxes: 0, prescriptions: 0, totalSaleAmount: 0, rawSaleAmount: 0,
       });
       return byDrug.get(String(id));
     };
     const divTotals = new Map();
-    saleRows.forEach((r) => {
-      const d = drugById.get(String(r._id.d));
-      if (!d) return;
-      const amount = (r.boxes || 0) * (d.price || 0);
-      const x = row(r._id.d);
-      x.saleBoxes += r.boxes || 0; x.totalSaleAmount += amount;
-      const div = empDiv.get(String(r._id.e)) || "—";
+    // a corrected sale: its corrected amount is shared over its lines in proportion to
+    // their original amounts (boxes × price) — boxes stay as entered, only the money changes
+    const saleRaw = new Map(), saleBoxes = new Map(), saleCorr = new Map();
+    saleLines.forEach((l) => {
+      const k = String(l.s);
+      saleRaw.set(k, (saleRaw.get(k) || 0) + (l.b || 0) * (allPrices.get(String(l.d)) || 0));
+      saleBoxes.set(k, (saleBoxes.get(k) || 0) + (l.b || 0));
+      if (l.c != null) saleCorr.set(k, l.c);
+    });
+    const lineAmount = (l) => {
+      const k = String(l.s);
+      const raw = (l.b || 0) * (allPrices.get(String(l.d)) || 0);
+      if (!saleCorr.has(k)) return raw;
+      const tot = saleRaw.get(k) || 0, bx = saleBoxes.get(k) || 0;
+      if (tot > 0) return saleCorr.get(k) * (raw / tot);
+      return bx > 0 ? saleCorr.get(k) * ((l.b || 0) / bx) : 0;
+    };
+    const correctedSales = new Set();
+    saleLines.forEach((l) => {
+      const d = drugById.get(String(l.d));
+      if (!d) return; // inactive drug
+      const raw = (l.b || 0) * (d.price || 0);
+      const amount = lineAmount(l);
+      if (saleCorr.has(String(l.s))) correctedSales.add(String(l.s));
+      const x = row(l.d);
+      x.saleBoxes += l.b || 0; x.totalSaleAmount += amount; x.rawSaleAmount += raw;
+      const div = empDiv.get(String(l.e)) || "—";
       const dt = divTotals.get(div) || { name: div, amount: 0, boxes: 0 };
-      dt.amount += amount; dt.boxes += r.boxes || 0; divTotals.set(div, dt);
+      dt.amount += amount; dt.boxes += l.b || 0; divTotals.set(div, dt);
     });
     targetRows.forEach((r) => { if (drugById.has(String(r._id.d))) row(r._id.d).monthlyTarget += r.boxes || 0; });
     rxRows.forEach((r) => { if (drugById.has(String(r._id))) row(r._id).prescriptions += r.rx || 0; });
 
     const rows = [...byDrug.values()].map((x) => ({
       ...x,
+      saleBoxes: r2(x.saleBoxes),
       totalSaleAmount: r2(x.totalSaleAmount),
+      rawSaleAmount: r2(x.rawSaleAmount),
+      corrected: Math.abs(x.totalSaleAmount - x.rawSaleAmount) >= 0.01,
       closingStocks: r2((x.openingStocks || 0) - (x.saleBoxes || 0)),
     })).sort((a, b) => b.saleBoxes - a.saleBoxes || b.totalSaleAmount - a.totalSaleAmount);
 
@@ -100,8 +133,10 @@ export async function getProductSale(req, res) {
       docs: rows,
       total: rows.length,
       totals: {
-        amount: r2(rows.reduce((s, x) => s + x.totalSaleAmount, 0)),
-        boxes: rows.reduce((s, x) => s + x.saleBoxes, 0),
+        amount: r2([...byDrug.values()].reduce((s, x) => s + x.totalSaleAmount, 0)),
+        rawAmount: r2([...byDrug.values()].reduce((s, x) => s + x.rawSaleAmount, 0)),
+        correctedSales: correctedSales.size,
+        boxes: r2(rows.reduce((s, x) => s + x.saleBoxes, 0)),
         target: rows.reduce((s, x) => s + x.monthlyTarget, 0),
         prescriptions: rows.reduce((s, x) => s + x.prescriptions, 0),
       },
