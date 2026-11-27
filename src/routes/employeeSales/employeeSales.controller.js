@@ -337,7 +337,7 @@ export async function getSaleFilters(req, res) {
     const allowed = scope ? new Set(scope.map(String)) : null;
     const [sections, groups, people] = await Promise.all([
       Section.find().select("name groups head").sort({ name: 1 }).lean(),
-      Group.find().select("name section head members").sort({ name: 1 }).lean(),
+      Group.find().select("name section head members drugs").sort({ name: 1 }).lean(), // saleGroupDrugs
       Employee.find(allowed ? { _id: { $in: [...allowed] } } : {}).select("group").lean(),
     ]);
     const sectionOf = new Map();
@@ -354,6 +354,7 @@ export async function getSaleFilters(req, res) {
       id: String(g._id), name: g.name,
       section: g.section ? String(g.section) : sectionOf.get(String(g._id)) || null,
       employees: [...byGroup.get(String(g._id))],
+      drugs: (g.drugs || []).map(String),
     }));
     const used = new Set(outGroups.map((g) => g.section).filter(Boolean));
     res.json({
